@@ -1,0 +1,10 @@
+CREATE TABLE IF NOT EXISTS servers (
+    id SERIAL PRIMARY KEY,
+    server_id VARCHAR(32) NOT NULL UNIQUE,
+    name VARCHAR(128) NOT NULL,
+    ip VARCHAR(45) NOT NULL,
+    rcon_port INTEGER NOT NULL,
+    rcon_password VARCHAR(128) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
