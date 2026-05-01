@@ -1,0 +1,2 @@
+ALTER TABLE servers ADD COLUMN IF NOT EXISTS token VARCHAR(64);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_servers_token ON servers(token) WHERE token IS NOT NULL;

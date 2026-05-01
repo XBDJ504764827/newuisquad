@@ -1,14 +1,13 @@
 mod api;
 mod config;
 mod db;
-mod log_watcher;
 mod models;
-mod rcon_client;
+mod protocol;
 mod repositories;
+mod rcon_client;
 mod services;
 
 use std::net::SocketAddr;
-use std::path::PathBuf;
 use std::sync::Arc;
 use tower_http::cors::{CorsLayer, Any};
 
@@ -24,19 +23,15 @@ async fn main() -> anyhow::Result<()> {
     sqlx::migrate!("./migrations").run(&pool).await?;
     tracing::info!("数据库迁移完成");
 
-    let log_broadcast = {
-        let path = PathBuf::from(&config.log_file_path);
-        if path.exists() {
-            let tx = services::log_service::start_log_watcher(path, pool.clone(), 1);
-            tracing::info!("日志监听器已启动: {}", config.log_file_path);
-            Some(Arc::new(tx))
-        } else {
-            tracing::warn!("日志文件不存在: {}，跳过日志监听", config.log_file_path);
-            None
-        }
-    };
+    // Agent 连接池（生产环境日志来源）
+    let agent_pool = api::agent_ws::AgentPool::new();
+    let log_tx = agent_pool.log_tx();
 
-    let state = api::AppState { pool, log_broadcast };
+    let state = api::AppState {
+        pool,
+        log_broadcast: Some(Arc::new(log_tx)),
+        agent_pool: Some(agent_pool),
+    };
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
