@@ -1,3 +1,9 @@
 pub mod server_repo;
 pub mod rcon_log_repo;
 pub mod server_log_repo;
+pub mod admin_user_repo;
+pub mod tk_settings_repo;
+pub mod afk_settings_repo;
+pub mod broadcast_repo;
+pub mod team_settings_repo;
+pub mod seed_settings_repo;

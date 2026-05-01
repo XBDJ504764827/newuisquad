@@ -1,3 +1,11 @@
 pub mod server;
 pub mod rcon_log;
 pub mod server_log;
+pub mod admin_user;
+pub mod tk_settings;
+pub mod afk_settings;
+pub mod broadcast_settings;
+pub mod announcement;
+pub mod auto_reply;
+pub mod team_settings;
+pub mod seed_settings;

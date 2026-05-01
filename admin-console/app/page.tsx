@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Sidebar from './components/Sidebar';
 import Topbar from './components/Topbar';
 import SummaryPage from './components/pages/SummaryPage';
@@ -13,6 +13,7 @@ import ConfigFilePage from './components/pages/ConfigFilePage';
 import ConfigPanelPage from './components/pages/ConfigPanelPage';
 import ActionLogsPage from './components/pages/ActionLogsPage';
 import PlayerInfoPage from './components/pages/PlayerInfoPage';
+import AdminUsersPage from './components/pages/AdminUsersPage';
 import PermissionsPage from './components/pages/PermissionsPage';
 import { PageId } from './types';
 
@@ -27,21 +28,53 @@ const pageComponents: Record<PageId, React.ComponentType> = {
   'config-panel': ConfigPanelPage,
   'action-logs': ActionLogsPage,
   'player-info': PlayerInfoPage,
+  'admin-users': AdminUsersPage,
   'permissions': PermissionsPage,
 };
 
+const breadcrumbMap: Record<PageId, { cat: string; page: string }> = {
+  'summary': { cat: '主页', page: '概要' },
+  'control-panel': { cat: '主页', page: '控制面板' },
+  'chat-logs': { cat: '日志系统', page: '聊天记录' },
+  'fly-logs': { cat: '日志系统', page: '飞天记录' },
+  'kill-logs': { cat: '日志系统', page: '击倒记录' },
+  'match-logs': { cat: '日志系统', page: '比赛记录' },
+  'action-logs': { cat: '日志系统', page: '操作记录' },
+  'player-info': { cat: '玩家管理', page: '玩家信息' },
+  'admin-users': { cat: '玩家管理', page: '网站管理员' },
+  'config-file': { cat: '系统配置', page: '配置文件' },
+  'config-panel': { cat: '系统配置', page: '配置面板' },
+  'permissions': { cat: '系统配置', page: '权限设置' },
+};
+
+function getHashPage(): PageId | null {
+  if (typeof window === 'undefined') return null;
+  const hash = window.location.hash.replace('#', '');
+  return (hash in pageComponents) ? hash as PageId : null;
+}
+
 export default function Home() {
-  const [activePage, setActivePage] = useState<PageId>('summary');
-  const [breadcrumbCat, setBreadcrumbCat] = useState('主页');
-  const [breadcrumbPage, setBreadcrumbPage] = useState('概要');
+  const [activePage, setActivePage] = useState<PageId | null>(null);
+  const [breadcrumb, setBreadcrumb] = useState(breadcrumbMap['summary']);
   const [collapsed, setCollapsed] = useState(false);
   const [dark, setDark] = useState(true);
 
-  function handleNavigate(pageId: PageId, category: string, pageName: string) {
+  // 首次挂载时从 URL hash 恢复页面（仅客户端），无闪烁
+  useEffect(() => {
+    const page = getHashPage() || 'summary';
+    setActivePage(page);
+    setBreadcrumb(breadcrumbMap[page]);
+  }, []);
+
+  // 页面切换 → 同步到 hash
+  useEffect(() => {
+    if (activePage) window.location.hash = activePage;
+  }, [activePage]);
+
+  const handleNavigate = useCallback((pageId: PageId, _category: string, _pageName: string) => {
     setActivePage(pageId);
-    setBreadcrumbCat(category);
-    setBreadcrumbPage(pageName);
-  }
+    setBreadcrumb(breadcrumbMap[pageId]);
+  }, []);
 
   function handleToggleSidebar() {
     setCollapsed(!collapsed);
@@ -53,6 +86,8 @@ export default function Home() {
     document.documentElement.className = nextDark ? 'dark' : 'light';
   }
 
+  if (!activePage) return null;
+
   const ActivePageComponent = pageComponents[activePage];
 
   return (
@@ -60,23 +95,14 @@ export default function Home() {
       <Sidebar collapsed={collapsed} activePage={activePage} onNavigate={handleNavigate} />
       <div className="main-area">
         <Topbar
-          category={breadcrumbCat}
-          page={breadcrumbPage}
+          category={breadcrumb.cat}
+          page={breadcrumb.page}
           onToggleSidebar={handleToggleSidebar}
           onToggleTheme={handleToggleTheme}
         />
         <main className="content">
           <ActivePageComponent />
         </main>
-        <div style={{ position: 'fixed', bottom: 8, right: 8, zIndex: 9999, display: 'flex', gap: 8 }}>
-          <span style={{ color: 'var(--text2)', fontSize: 11, lineHeight: '24px' }}>当前: {activePage}</span>
-          <button
-            onClick={() => setActivePage(activePage === 'summary' ? 'control-panel' : 'summary')}
-            style={{ padding: '2px 10px', fontSize: 11, background: 'var(--text)', color: 'var(--bg)', border: 'none', borderRadius: 4, cursor: 'pointer' }}
-          >
-            测试切换
-          </button>
-        </div>
       </div>
     </>
   );

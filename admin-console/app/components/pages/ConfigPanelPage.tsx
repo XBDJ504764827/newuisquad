@@ -1,6 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+
+const API_BASE = 'http://192.168.0.137:8000/api/v1';
 
 const configTabs = [
   { id: 'tab-1', label: '快捷设置' },
@@ -15,19 +17,193 @@ const configTabs = [
   { id: 'tab-10', label: '异常伤害' },
 ];
 
+interface AfkSettings {
+  id: number; server_id: number; enabled: boolean;
+  min_players_to_check: number; max_afk_minutes: number;
+}
+
+interface TkSettings {
+  id: number;
+  server_id: number;
+  enabled: boolean;
+  max_team_kills: number;
+  apology_time_minutes: number;
+  notification_message: string | null;
+}
+
 export default function ConfigPanelPage() {
   const [activeTab, setActiveTab] = useState('tab-1');
+  const [servers, setServers] = useState<{ id: number; name: string }[]>([]);
+  const [selectedServerId, setSelectedServerId] = useState<number | null>(null);
+
+  // TK settings state
+  const [tkSettings, setTkSettings] = useState<TkSettings | null>(null);
+  const [tkLoading, setTkLoading] = useState(false);
+  const [tkSaving, setTkSaving] = useState(false);
+  const [tkError, setTkError] = useState('');
+  const [tkForm, setTkForm] = useState({ enabled: false, max_team_kills: 3, apology_time_minutes: 5, notification_message: '' });
+  // AFK settings state
+  const [afkLoading, setAfkLoading] = useState(false);
+  const [afkSaving, setAfkSaving] = useState(false);
+  const [afkError, setAfkError] = useState('');
+  const [afkForm, setAfkForm] = useState({ enabled: false, min_players_to_check: 10, max_afk_minutes: 15 });
+  // Broadcast settings state
+  const [bcLoading, setBcLoading] = useState(false);
+  const [bcSaving, setBcSaving] = useState(false);
+  const [bcError, setBcError] = useState('');
+  const [bcForm, setBcForm] = useState({
+    join_message_enabled: true, join_message: '欢迎 {player} 加入服务器',
+    gameop_list_enabled: false, gameop_list_message: '在线管理员: {oplist}',
+    announcement_enabled: false, announcement_content: '', announcement_interval: 10,
+  });
+  // Announcements list
+  const [announcements, setAnnouncements] = useState<{ id: number; content: string; interval_minutes: number; enabled: boolean }[]>([]);
+  const [newAnn, setNewAnn] = useState({ content: '', interval_minutes: 10 });
+  // Auto-replies list
+  const [autoReplies, setAutoReplies] = useState<{ id: number; keyword: string; reply_message: string; enabled: boolean }[]>([]);
+  const [newReply, setNewReply] = useState({ keyword: '', reply_message: '' });
+  // Team settings state
+  const [teamLoading, setTeamLoading] = useState(false);
+  const [teamSaving, setTeamSaving] = useState(false);
+  const [teamError, setTeamError] = useState('');
+  const [teamForm, setTeamForm] = useState({ create_team_broadcast: true, captain_time_check: false, captain_min_playtime: 30, captain_check_min_players: 20, max_create_team_attempts: 3 });
+  // Seed settings state
+  const [seedLoading, setSeedLoading] = useState(false);
+  const [seedSaving, setSeedSaving] = useState(false);
+  const [seedError, setSeedError] = useState('');
+  const [seedForm, setSeedForm] = useState({ enabled: false, player_threshold: 20, vehicle_claim: true, vehicle_fill: true, deploy_restrict: false, kit_restrict: false, heavy_vehicle_require: false, respawn_timer: true, use_enemy_vehicle: false });
+
+  useEffect(() => {
+    fetch(`${API_BASE}/servers`)
+      .then(r => r.json())
+      .then(data => {
+        setServers(data.data || []);
+        if (data.data?.length > 0) setSelectedServerId(data.data[0].id);
+      })
+      .catch(() => {});
+  }, []);
+
+  // 加载 TK 设置
+  useEffect(() => {
+    if (!selectedServerId) return;
+    setTkLoading(true);
+    fetch(`${API_BASE}/servers/${selectedServerId}/tk-settings`)
+      .then(r => r.json())
+      .then(data => {
+        setTkSettings(data);
+        setTkForm({ enabled: data.enabled, max_team_kills: data.max_team_kills, apology_time_minutes: data.apology_time_minutes, notification_message: data.notification_message || '' });
+        setTkLoading(false);
+      })
+      .catch(() => setTkLoading(false));
+    // 加载 AFK 设置
+    setAfkLoading(true);
+    fetch(`${API_BASE}/servers/${selectedServerId}/afk-settings`)
+      .then(r => r.json())
+      .then(data => { setAfkForm({ enabled: data.enabled, min_players_to_check: data.min_players_to_check, max_afk_minutes: data.max_afk_minutes }); setAfkLoading(false); })
+      .catch(() => setAfkLoading(false));
+    // 加载广播设置
+    setBcLoading(true);
+    fetch(`${API_BASE}/servers/${selectedServerId}/broadcast-settings`)
+      .then(r => r.json())
+      .then(data => { setBcForm({ join_message_enabled: data.join_message_enabled, join_message: data.join_message, gameop_list_enabled: data.gameop_list_enabled, gameop_list_message: data.gameop_list_message, announcement_enabled: data.announcement_enabled, announcement_content: data.announcement_content || '', announcement_interval: data.announcement_interval }); setBcLoading(false); })
+      .catch(() => setBcLoading(false));
+    fetch(`${API_BASE}/servers/${selectedServerId}/announcements`).then(r => r.json()).then(d => setAnnouncements(d.data || [])).catch(() => {});
+    fetch(`${API_BASE}/servers/${selectedServerId}/auto-replies`).then(r => r.json()).then(d => setAutoReplies(d.data || [])).catch(() => {});
+    // 加载队伍设置
+    setTeamLoading(true);
+    fetch(`${API_BASE}/servers/${selectedServerId}/team-settings`).then(r => r.json())
+      .then(d => { setTeamForm({ create_team_broadcast: d.create_team_broadcast, captain_time_check: d.captain_time_check, captain_min_playtime: d.captain_min_playtime, captain_check_min_players: d.captain_check_min_players, max_create_team_attempts: d.max_create_team_attempts }); setTeamLoading(false); })
+      .catch(() => setTeamLoading(false));
+    // 加载暖服设置
+    setSeedLoading(true);
+    fetch(`${API_BASE}/servers/${selectedServerId}/seed-settings`).then(r => r.json())
+      .then(d => { const f: Record<string, boolean | number> = { enabled: d.enabled, player_threshold: d.player_threshold, vehicle_claim: d.vehicle_claim, vehicle_fill: d.vehicle_fill, deploy_restrict: d.deploy_restrict, kit_restrict: d.kit_restrict, heavy_vehicle_require: d.heavy_vehicle_require, respawn_timer: d.respawn_timer, use_enemy_vehicle: d.use_enemy_vehicle }; setSeedForm(f as any); setSeedLoading(false); })
+      .catch(() => setSeedLoading(false));
+  }, [selectedServerId]);
+
+  const saveTkSettings = useCallback(async () => {
+    if (!selectedServerId) return;
+    setTkSaving(true);
+    setTkError('');
+    const res = await fetch(`${API_BASE}/servers/${selectedServerId}/tk-settings`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(tkForm),
+    });
+    const data = await res.json();
+    setTkSaving(false);
+    if (data.error) { setTkError(data.error); } else { setTkSettings(data); }
+  }, [selectedServerId, tkForm]);
+
+  const saveAfkSettings = useCallback(async () => {
+    if (!selectedServerId) return; setAfkSaving(true); setAfkError('');
+    const res = await fetch(`${API_BASE}/servers/${selectedServerId}/afk-settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(afkForm) });
+    const data = await res.json(); setAfkSaving(false);
+    if (data.error) { setAfkError(data.error); }
+  }, [selectedServerId, afkForm]);
+
+  const saveBroadcast = useCallback(async () => {
+    if (!selectedServerId) return; setBcSaving(true); setBcError('');
+    const res = await fetch(`${API_BASE}/servers/${selectedServerId}/broadcast-settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(bcForm) });
+    const data = await res.json(); setBcSaving(false);
+    if (data.error) { setBcError(data.error); }
+  }, [selectedServerId, bcForm]);
+
+  const saveTeamSettings = useCallback(async () => {
+    if (!selectedServerId) return; setTeamSaving(true); setTeamError('');
+    const res = await fetch(`${API_BASE}/servers/${selectedServerId}/team-settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(teamForm) });
+    const data = await res.json(); setTeamSaving(false);
+    if (data.error) setTeamError(data.error);
+  }, [selectedServerId, teamForm]);
+
+  const saveSeedSettings = useCallback(async () => {
+    if (!selectedServerId) return; setSeedSaving(true); setSeedError('');
+    const res = await fetch(`${API_BASE}/servers/${selectedServerId}/seed-settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(seedForm) });
+    const data = await res.json(); setSeedSaving(false);
+    if (data.error) setSeedError(data.error);
+  }, [selectedServerId, seedForm]);
+
+  const addAnnouncement = useCallback(async () => {
+    if (!selectedServerId || !newAnn.content) return;
+    const res = await fetch(`${API_BASE}/servers/${selectedServerId}/announcements`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newAnn) });
+    const data = await res.json();
+    setAnnouncements(prev => [...prev, data]);
+    setNewAnn({ content: '', interval_minutes: 10 });
+  }, [selectedServerId, newAnn]);
+
+  const delAnnouncement = useCallback(async (id: number) => {
+    await fetch(`${API_BASE}/servers/${selectedServerId}/announcements/${id}`, { method: 'DELETE' });
+    setAnnouncements(prev => prev.filter(a => a.id !== id));
+  }, [selectedServerId]);
+
+  const addAutoReply = useCallback(async () => {
+    if (!selectedServerId || !newReply.keyword || !newReply.reply_message) return;
+    const res = await fetch(`${API_BASE}/servers/${selectedServerId}/auto-replies`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newReply) });
+    const data = await res.json();
+    setAutoReplies(prev => [...prev, data]);
+    setNewReply({ keyword: '', reply_message: '' });
+  }, [selectedServerId, newReply]);
+
+  const delAutoReply = useCallback(async (id: number) => {
+    await fetch(`${API_BASE}/servers/${selectedServerId}/auto-replies/${id}`, { method: 'DELETE' });
+    setAutoReplies(prev => prev.filter(r => r.id !== id));
+  }, [selectedServerId]);
 
   return (
     <div className="page-view" style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      {servers.length > 0 && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <span style={{ fontSize: 12, color: 'var(--text3)' }}>服务器：</span>
+          <select className="rcon-input" style={{ width: 'auto', padding: '6px 10px' }} value={selectedServerId || ''} onChange={e => setSelectedServerId(parseInt(e.target.value))}>
+            {servers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </div>
+      )}
+
       <div className="card">
         <div className="tabs-header">
           {configTabs.map((tab) => (
-            <button
-              key={tab.id}
-              className={`tab-btn${activeTab === tab.id ? ' active' : ''}`}
-              onClick={() => setActiveTab(tab.id)}
-            >
+            <button key={tab.id} className={`tab-btn${activeTab === tab.id ? ' active' : ''}`} onClick={() => setActiveTab(tab.id)}>
               {tab.label}
             </button>
           ))}
@@ -45,13 +221,252 @@ export default function ConfigPanelPage() {
           </div>
         )}
 
-        {activeTab === 'tab-2' && <div className="tab-content" style={{ display: 'block' }}><h4>误杀设置 (TK)</h4><p style={{ color: 'var(--text3)', fontSize: 12, marginTop: 8 }}>设置队友误伤惩罚和自动踢出机制。（功能UI待实现）</p></div>}
-        {activeTab === 'tab-3' && <div className="tab-content" style={{ display: 'block' }}><h4>挂机设置 (AFK)</h4><p style={{ color: 'var(--text3)', fontSize: 12, marginTop: 8 }}>设置挂机检测时间及处理方式。（功能UI待实现）</p></div>}
+        {activeTab === 'tab-2' && (
+          <div className="tab-content" style={{ display: 'block' }}>
+            <h4 style={{ marginBottom: 20 }}>误杀设置 (TK)</h4>
+            {!selectedServerId ? (
+              <p style={{ color: 'var(--text3)', fontSize: 12 }}>请先添加游戏服务器。</p>
+            ) : tkLoading ? (
+              <p style={{ color: 'var(--text3)', fontSize: 12 }}>加载中...</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 20, maxWidth: 500 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={tkForm.enabled} onChange={e => setTkForm({...tkForm, enabled: e.target.checked})} />
+                  <div>
+                    <div style={{ fontWeight: 500 }}>开启误杀检测</div>
+                    <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>开启后将监控玩家误杀队友行为</div>
+                  </div>
+                </label>
+
+                <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+                  <label style={{ fontSize: 12, color: 'var(--text2)', display: 'block', marginBottom: 6 }}>单局最大误杀人数</label>
+                  <input className="rcon-input" type="number" min={1} max={20} style={{ width: 100 }} value={tkForm.max_team_kills}
+                    onChange={e => setTkForm({...tkForm, max_team_kills: parseInt(e.target.value) || 0})} />
+                  <p style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>超过此数值后玩家将被踢出服务器</p>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: 12, color: 'var(--text2)', display: 'block', marginBottom: 6 }}>道歉时间（分钟）</label>
+                  <input className="rcon-input" type="number" min={1} max={60} style={{ width: 100 }} value={tkForm.apology_time_minutes}
+                    onChange={e => setTkForm({...tkForm, apology_time_minutes: parseInt(e.target.value) || 0})} />
+                  <p style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>超过此时间未道歉则被踢出服务器</p>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: 12, color: 'var(--text2)', display: 'block', marginBottom: 6 }}>自定义通知消息</label>
+                  <textarea className="rcon-input" rows={3} style={{ resize: 'vertical' }} value={tkForm.notification_message}
+                    onChange={e => setTkForm({...tkForm, notification_message: e.target.value})}
+                    placeholder="误杀队友将被踢出服务器，请在 {time} 分钟内输入 !sorry 道歉。" />
+                  <p style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>{'{time}'} 会被自动替换为实际道歉时间</p>
+                </div>
+
+                {tkError && <div style={{ color: 'var(--red)', fontSize: 12 }}>{tkError}</div>}
+
+                <button className="rcon-btn" style={{ width: 'auto', padding: '10px 24px' }} onClick={saveTkSettings} disabled={tkSaving}>
+                  {tkSaving ? '保存中...' : '保存设置'}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'tab-3' && (
+          <div className="tab-content" style={{ display: 'block' }}>
+            <h4 style={{ marginBottom: 20 }}>挂机设置 (AFK)</h4>
+            {!selectedServerId ? <p style={{ color: 'var(--text3)', fontSize: 12 }}>请先添加游戏服务器。</p>
+            : afkLoading ? <p style={{ color: 'var(--text3)', fontSize: 12 }}>加载中...</p> : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 20, maxWidth: 500 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={afkForm.enabled} onChange={e => setAfkForm({...afkForm, enabled: e.target.checked})} />
+                  <div><div style={{ fontWeight: 500 }}>开启挂机检测</div><div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>开启后，当服务器人数达到指定数量时启动检测</div></div>
+                </label>
+                <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+                  <label style={{ fontSize: 12, color: 'var(--text2)', display: 'block', marginBottom: 6 }}>启动检测人数</label>
+                  <input className="rcon-input" type="number" min={1} max={100} style={{ width: 100 }} value={afkForm.min_players_to_check}
+                    onChange={e => setAfkForm({...afkForm, min_players_to_check: parseInt(e.target.value) || 0})} />
+                  <p style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>服务器人数达到此数量后开始挂机检测</p>
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, color: 'var(--text2)', display: 'block', marginBottom: 6 }}>最大挂机时长（分钟）</label>
+                  <input className="rcon-input" type="number" min={1} max={120} style={{ width: 100 }} value={afkForm.max_afk_minutes}
+                    onChange={e => setAfkForm({...afkForm, max_afk_minutes: parseInt(e.target.value) || 0})} />
+                  <p style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>玩家持续挂机超过此时长将被踢出服务器</p>
+                </div>
+                {afkError && <div style={{ color: 'var(--red)', fontSize: 12 }}>{afkError}</div>}
+                <button className="rcon-btn" style={{ width: 'auto', padding: '10px 24px' }} onClick={saveAfkSettings} disabled={afkSaving}>
+                  {afkSaving ? '保存中...' : '保存设置'}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
         {activeTab === 'tab-4' && <div className="tab-content" style={{ display: 'block' }}><h4>跳边设置</h4><p style={{ color: 'var(--text3)', fontSize: 12, marginTop: 8 }}>限制玩家频繁更换阵营。（功能UI待实现）</p></div>}
-        {activeTab === 'tab-5' && <div className="tab-content" style={{ display: 'block' }}><h4>广播设置</h4><p style={{ color: 'var(--text3)', fontSize: 12, marginTop: 8 }}>配置定时系统广播消息。（功能UI待实现）</p></div>}
-        {activeTab === 'tab-6' && <div className="tab-content" style={{ display: 'block' }}><h4>队伍设置</h4><p style={{ color: 'var(--text3)', fontSize: 12, marginTop: 8 }}>配置队伍人数上限、自动平衡规则等。（功能UI待实现）</p></div>}
+        {activeTab === 'tab-5' && (
+          <div className="tab-content" style={{ display: 'block' }}>
+            <h4 style={{ marginBottom: 20 }}>广播设置</h4>
+            {!selectedServerId ? <p style={{ color: 'var(--text3)', fontSize: 12 }}>请先添加游戏服务器。</p>
+            : bcLoading ? <p style={{ color: 'var(--text3)', fontSize: 12 }}>加载中...</p> : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 24, maxWidth: 560 }}>
+                {/* 进入提醒 */}
+                <div style={{ borderBottom: '1px solid var(--border)', paddingBottom: 20 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', marginBottom: 12 }}>
+                    <input type="checkbox" checked={bcForm.join_message_enabled} onChange={e => setBcForm({...bcForm, join_message_enabled: e.target.checked})} />
+                    <div><div style={{ fontWeight: 500 }}>玩家进入提醒</div><div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>玩家加入服务器时广播欢迎消息</div></div>
+                  </label>
+                  <label style={{ fontSize: 12, color: 'var(--text2)', display: 'block', marginBottom: 6 }}>欢迎消息</label>
+                  <input className="rcon-input" value={bcForm.join_message} onChange={e => setBcForm({...bcForm, join_message: e.target.value})} />
+                  <p style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>{'{player}'} 会被替换为玩家名称</p>
+                </div>
+
+                {/* OP列表 */}
+                <div style={{ borderBottom: '1px solid var(--border)', paddingBottom: 20 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', marginBottom: 12 }}>
+                    <input type="checkbox" checked={bcForm.gameop_list_enabled} onChange={e => setBcForm({...bcForm, gameop_list_enabled: e.target.checked})} />
+                    <div><div style={{ fontWeight: 500 }}>在线 OP 列表</div><div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>玩家呼唤 OP 时显示在线管理员列表</div></div>
+                  </label>
+                  <label style={{ fontSize: 12, color: 'var(--text2)', display: 'block', marginBottom: 6 }}>OP 列表消息格式</label>
+                  <input className="rcon-input" value={bcForm.gameop_list_message} onChange={e => setBcForm({...bcForm, gameop_list_message: e.target.value})} />
+                  <p style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>{'{oplist}'} 会被替换为在线 OP 名称列表</p>
+                </div>
+
+                {/* 定时通告（多条） */}
+                <div style={{ borderBottom: '1px solid var(--border)', paddingBottom: 20 }}>
+                  <div style={{ fontWeight: 500, marginBottom: 12 }}>定时通告列表</div>
+                  {announcements.length === 0 && <p style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 12 }}>暂无通告</p>}
+                  {announcements.map(a => (
+                    <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
+                      <span style={{ flex: 1, fontSize: 13 }}>{a.content}</span>
+                      <span className="badge gray" style={{ fontSize: 10 }}>每{a.interval_minutes}{a.interval_minutes === 0 ? '(连续)' : '分钟'}</span>
+                      <span className="badge red" style={{ cursor: 'pointer', fontSize: 10 }} onClick={() => delAnnouncement(a.id)}>删除</span>
+                    </div>
+                  ))}
+                  <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                    <input className="rcon-input" style={{ flex: 1 }} placeholder="通告内容" value={newAnn.content} onChange={e => setNewAnn({...newAnn, content: e.target.value})}
+                      onKeyDown={e => e.key === 'Enter' && addAnnouncement()} />
+                    <input className="rcon-input" type="number" min={0} max={120} style={{ width: 70 }} value={newAnn.interval_minutes}
+                      onChange={e => setNewAnn({...newAnn, interval_minutes: parseInt(e.target.value) || 0})} title="间隔分钟" />
+                    <button className="rcon-btn" style={{ width: 'auto', padding: '8px 14px', fontSize: 12 }} onClick={addAnnouncement}>添加</button>
+                  </div>
+                </div>
+
+                {/* 自动回复（多条） */}
+                <div>
+                  <div style={{ fontWeight: 500, marginBottom: 12 }}>自动回复规则</div>
+                  {autoReplies.length === 0 && <p style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 12 }}>暂无自动回复规则</p>}
+                  {autoReplies.map(r => (
+                    <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
+                      <span className="badge blue" style={{ fontSize: 10 }}>{r.keyword}</span>
+                      <span style={{ flex: 1, fontSize: 13 }}>{r.reply_message}</span>
+                      <span className="badge red" style={{ cursor: 'pointer', fontSize: 10 }} onClick={() => delAutoReply(r.id)}>删除</span>
+                    </div>
+                  ))}
+                  <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                    <input className="rcon-input" style={{ width: 120 }} placeholder="关键字" value={newReply.keyword} onChange={e => setNewReply({...newReply, keyword: e.target.value})}
+                      onKeyDown={e => e.key === 'Enter' && addAutoReply()} />
+                    <input className="rcon-input" style={{ flex: 1 }} placeholder="回复消息" value={newReply.reply_message} onChange={e => setNewReply({...newReply, reply_message: e.target.value})}
+                      onKeyDown={e => e.key === 'Enter' && addAutoReply()} />
+                    <button className="rcon-btn" style={{ width: 'auto', padding: '8px 14px', fontSize: 12 }} onClick={addAutoReply}>添加</button>
+                  </div>
+                </div>
+
+                {bcError && <div style={{ color: 'var(--red)', fontSize: 12 }}>{bcError}</div>}
+                <button className="rcon-btn" style={{ width: 'auto', padding: '10px 24px' }} onClick={saveBroadcast} disabled={bcSaving}>
+                  {bcSaving ? '保存中...' : '保存设置'}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+        {activeTab === 'tab-6' && (
+          <div className="tab-content" style={{ display: 'block' }}>
+            <h4 style={{ marginBottom: 20 }}>队伍设置</h4>
+            {!selectedServerId ? <p style={{ color: 'var(--text3)', fontSize: 12 }}>请先添加游戏服务器。</p>
+            : teamLoading ? <p style={{ color: 'var(--text3)', fontSize: 12 }}>加载中...</p> : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 24, maxWidth: 500 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={teamForm.create_team_broadcast} onChange={e => setTeamForm({...teamForm, create_team_broadcast: e.target.checked})} />
+                  <div><div style={{ fontWeight: 500 }}>建队广播</div><div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>玩家创建队伍时向全服广播</div></div>
+                </label>
+
+                <div style={{ borderTop: '1px solid var(--border)', paddingTop: 20 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', marginBottom: 16 }}>
+                    <input type="checkbox" checked={teamForm.captain_time_check} onChange={e => setTeamForm({...teamForm, captain_time_check: e.target.checked})} />
+                    <div><div style={{ fontWeight: 500 }}>队长游戏时长检测</div><div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>检测队长是否满足最小游戏时长要求</div></div>
+                  </label>
+                  <label style={{ fontSize: 12, color: 'var(--text2)', display: 'block', marginBottom: 6 }}>队长最小游戏时长（分钟）</label>
+                  <input className="rcon-input" type="number" min={1} max={9999} style={{ width: 100 }} value={teamForm.captain_min_playtime}
+                    onChange={e => setTeamForm({...teamForm, captain_min_playtime: parseInt(e.target.value) || 0})} />
+                  <p style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>队长游戏时长未达到此数值时不可建队</p>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: 12, color: 'var(--text2)', display: 'block', marginBottom: 6 }}>时长检查生效人数</label>
+                  <input className="rcon-input" type="number" min={1} max={100} style={{ width: 100 }} value={teamForm.captain_check_min_players}
+                    onChange={e => setTeamForm({...teamForm, captain_check_min_players: parseInt(e.target.value) || 0})} />
+                  <p style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>服务器人数达到此数量后才开始检查队长时长</p>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: 12, color: 'var(--text2)', display: 'block', marginBottom: 6 }}>最大建队次数</label>
+                  <input className="rcon-input" type="number" min={1} max={50} style={{ width: 100 }} value={teamForm.max_create_team_attempts}
+                    onChange={e => setTeamForm({...teamForm, max_create_team_attempts: parseInt(e.target.value) || 0})} />
+                  <p style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>玩家不满足时长要求重复建队超过此次数将被踢出</p>
+                </div>
+
+                {teamError && <div style={{ color: 'var(--red)', fontSize: 12 }}>{teamError}</div>}
+                <button className="rcon-btn" style={{ width: 'auto', padding: '10px 24px' }} onClick={saveTeamSettings} disabled={teamSaving}>
+                  {teamSaving ? '保存中...' : '保存设置'}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
         {activeTab === 'tab-7' && <div className="tab-content" style={{ display: 'block' }}><h4>悬赏设置</h4><p style={{ color: 'var(--text3)', fontSize: 12, marginTop: 8 }}>击杀连杀玩家的赏金系统设置。（功能UI待实现）</p></div>}
-        {activeTab === 'tab-8' && <div className="tab-content" style={{ display: 'block' }}><h4>暖服设置</h4><p style={{ color: 'var(--text3)', fontSize: 12, marginTop: 8 }}>设置人少时的 BOT 添加或特定暖服地图。（功能UI待实现）</p></div>}
+        {activeTab === 'tab-8' && (
+          <div className="tab-content" style={{ display: 'block' }}>
+            <h4 style={{ marginBottom: 20 }}>暖服设置</h4>
+            {!selectedServerId ? <p style={{ color: 'var(--text3)', fontSize: 12 }}>请先添加游戏服务器。</p>
+            : seedLoading ? <p style={{ color: 'var(--text3)', fontSize: 12 }}>加载中...</p> : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 24, maxWidth: 560 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={seedForm.enabled} onChange={e => setSeedForm({...seedForm, enabled: e.target.checked})} />
+                  <div><div style={{ fontWeight: 500 }}>开启暖服功能</div><div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>在线人数低于阈值时自动触发下方暖服规则</div></div>
+                </label>
+                <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+                  <label style={{ fontSize: 12, color: 'var(--text2)', display: 'block', marginBottom: 6 }}>暖服人数阈值</label>
+                  <input className="rcon-input" type="number" min={1} max={100} style={{ width: 100 }} value={seedForm.player_threshold}
+                    onChange={e => setSeedForm({...seedForm, player_threshold: parseInt(e.target.value) || 0})} />
+                  <p style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>在线人数小于此值时触发暖服</p>
+                </div>
+
+                <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+                  <div style={{ fontWeight: 500, marginBottom: 14 }}>暖服规则</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    {[
+                      { k: 'vehicle_claim', label: '载具认领权限', desc: '开启后允许玩家认领载具' },
+                      { k: 'vehicle_fill', label: '载具刷新位置填满', desc: '始终填满所有载具刷新位置' },
+                      { k: 'deploy_restrict', label: '部署要求限制', desc: '限制沙袋、机枪、前哨等部署条件' },
+                      { k: 'kit_restrict', label: '兵种人数限制', desc: '对工兵、医生、迫击炮等职业数量限制' },
+                      { k: 'heavy_vehicle_require', label: '坦克飞机载具要求', desc: '限制重型载具所需套件/人员要求' },
+                      { k: 'respawn_timer', label: '复活时间', desc: '开启=启用计时/更慢复活' },
+                      { k: 'use_enemy_vehicle', label: '使用敌方载具', desc: '允许或禁止使用敌方载具' },
+                    ].map(({ k, label, desc }) => (
+                      <label key={k} style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}>
+                        <input type="checkbox" checked={!!(seedForm as any)[k]} onChange={e => setSeedForm({...seedForm, [k]: e.target.checked})} />
+                        <div><div style={{ fontSize: 13 }}>{label}</div><div style={{ fontSize: 11, color: 'var(--text3)' }}>{desc}</div></div>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                {seedError && <div style={{ color: 'var(--red)', fontSize: 12 }}>{seedError}</div>}
+                <button className="rcon-btn" style={{ width: 'auto', padding: '10px 24px' }} onClick={saveSeedSettings} disabled={seedSaving}>
+                  {seedSaving ? '保存中...' : '保存设置'}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
         {activeTab === 'tab-9' && <div className="tab-content" style={{ display: 'block' }}><h4>伤害通知</h4><p style={{ color: 'var(--text3)', fontSize: 12, marginTop: 8 }}>HUD 伤害显示开关及样式。（功能UI待实现）</p></div>}
         {activeTab === 'tab-10' && <div className="tab-content" style={{ display: 'block' }}><h4>异常伤害</h4><p style={{ color: 'var(--text3)', fontSize: 12, marginTop: 8 }}>定义过高伤害的检测阈值及反制措施。（功能UI待实现）</p></div>}
       </div>

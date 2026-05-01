@@ -1,0 +1,8 @@
+CREATE TABLE IF NOT EXISTS auto_replies (
+    id SERIAL PRIMARY KEY,
+    server_id INTEGER NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+    keyword VARCHAR(128) NOT NULL,
+    reply_message TEXT NOT NULL,
+    enabled BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
