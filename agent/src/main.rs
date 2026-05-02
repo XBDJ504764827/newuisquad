@@ -2,6 +2,7 @@ mod config;
 mod file_ops;
 mod log_watcher;
 mod protocol;
+mod rcon_listener;
 mod ws_client;
 
 use std::path::PathBuf;
@@ -43,6 +44,16 @@ async fn main() -> anyhow::Result<()> {
     let ws_handle = tokio::spawn(async move {
         ws_client::run(ws_url, ws_tx, ws_rx).await;
     });
+
+    // RCON 实时监听 → Channel A（聊天、事件）
+    if !config.rcon_password.is_empty() {
+        rcon_listener::start_rcon_listener(
+            config.rcon_host.clone(),
+            config.rcon_port,
+            config.rcon_password.clone(),
+            to_ws_tx.clone(),
+        );
+    }
 
     // 日志文件监听 → Channel A
     let log_path = PathBuf::from(&config.log_file_path);

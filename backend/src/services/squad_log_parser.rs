@@ -85,6 +85,13 @@ pub enum ParsedEvent {
         weapon: String,
         logged_at: NaiveDateTime,
     },
+    ChatMessage {
+        player_name: String,
+        steam64: String,
+        message: String,
+        channel: String,
+        logged_at: NaiveDateTime,
+    },
 }
 
 /// 解析 Squad 日志行的时间戳 [2026.05.01-06.17.03:441]
@@ -484,6 +491,29 @@ pub fn parse_line(line: &str) -> Option<ParsedEvent> {
         let weapon = line.split("caused by ").last().map(|s| s.split('_').next().unwrap_or(s).trim().to_string()).unwrap_or_default();
         let killer_steam = extract_online_ids(line).1;
         return Some(ParsedEvent::PlayerDeath { player_name, steam64: steam, killer_steam64: killer_steam, weapon, logged_at: ts });
+    }
+
+    // 17. 聊天消息: [Chat] PlayerName (SteamID): message
+    // 也支持 RCON 事件格式: [ChatAll] / [ChatTeam] / ChatAll: 等
+    if line.contains("[Chat") || line.to_lowercase().contains("chatall") || line.to_lowercase().contains("chatteam") {
+        let content = if let Some(pos) = line.find("[Chat]") { &line[pos + 6..] }
+            else if let Some(pos) = line.find("Chat:") { &line[pos + 5..] }
+            else { line };
+        let content = content.trim();
+        if let Some(colon_pos) = content.find(": ") {
+            let header = &content[..colon_pos];
+            let message = content[colon_pos + 2..].trim().to_string();
+            if let Some(paren_start) = header.rfind('(') {
+                if let Some(paren_end) = header.rfind(')') {
+                    let sid_str = &header[paren_start + 1..paren_end];
+                    let player_name = header[..paren_start].trim().to_string();
+                    if sid_str.chars().all(|c| c.is_ascii_digit()) && sid_str.len() >= 10 {
+                        let channel = if line.to_lowercase().contains("team") { "Team" } else { "All" };
+                        return Some(ParsedEvent::ChatMessage { player_name, steam64: sid_str.to_string(), message, channel: channel.to_string(), logged_at: ts });
+                    }
+                }
+            }
+        }
     }
 
     None

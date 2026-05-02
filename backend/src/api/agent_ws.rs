@@ -173,6 +173,9 @@ async fn handle_socket(
                                         ParsedEvent::PlayerDeath { player_name, steam64, killer_steam64, weapon, logged_at } => {
                                             let _ = sqlx::query("INSERT INTO kill_events (server_id, attacker_name, attacker_steam64, victim_name, damage, weapon, is_kill, is_teamkill, logged_at) VALUES ($1,'',$2,$3,0,$4,true,false,$5)").bind(sid).bind(&killer_steam64).bind(&player_name).bind(&weapon).bind(logged_at).execute(&pool).await;
                                         }
+                                        ParsedEvent::ChatMessage { player_name, steam64, message, channel, logged_at } => {
+                                            let _ = sqlx::query("INSERT INTO chat_messages (server_id, player_name, steam64, message, channel, logged_at) VALUES ($1,$2,$3,$4,$5,$6)").bind(sid).bind(&player_name).bind(&steam64).bind(&message).bind(&channel).bind(logged_at).execute(&pool).await;
+                                        }
                                         _ => {}
                                     }
                                 }

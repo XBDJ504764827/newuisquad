@@ -19,6 +19,7 @@ pub mod server_control;
 pub mod operation_logs;
 pub mod auth;
 pub mod auth_middleware;
+pub mod chat;
 
 use axum::{Router, routing::{get, post, put}};
 use sqlx::PgPool;
@@ -63,6 +64,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v1/servers/{id}/fly-events", get(squad_events::fly_events))
         .route("/api/v1/servers/{id}/kill-events", get(squad_events::kill_events))
         .route("/api/v1/servers/{id}/player-info", get(squad_events::player_info))
+        .route("/api/v1/servers/{id}/chat-messages", get(chat::list))
         .route("/api/v1/servers/{id}/server-state", get(server_control::get_server_state))
         .route("/api/v1/servers/{id}/player-action", post(server_control::player_action))
         .route("/api/v1/servers/{id}/disband-squad/{team_id}/{squad_id}", axum::routing::delete(server_control::disband_squad))

@@ -7,6 +7,9 @@ pub struct Config {
     pub log_file_path: String,
     pub game_dir: String,
     pub config_dir: String,
+    pub rcon_host: String,
+    pub rcon_port: u16,
+    pub rcon_password: String,
 }
 
 impl Config {
@@ -21,13 +24,15 @@ impl Config {
             .unwrap_or_else(|_| r"C:\game\".into());
         let config_dir = env::var("CONFIG_DIR")
             .unwrap_or_else(|_| game_dir.clone());
+        let rcon_host = env::var("RCON_HOST").unwrap_or_else(|_| "127.0.0.1".into());
+        let rcon_port: u16 = env::var("RCON_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(28016);
+        let rcon_password = env::var("RCON_PASSWORD").unwrap_or_default();
 
         eprintln!("[Config] BACKEND_WS_URL = {}", backend_ws_url);
         eprintln!("[Config] TOKEN          = {}...", &token[..16.min(token.len())]);
         eprintln!("[Config] LOG_FILE_PATH  = {}", log_file_path);
-        eprintln!("[Config] GAME_DIR       = {}", game_dir);
-        eprintln!("[Config] CONFIG_DIR     = {}", config_dir);
+        eprintln!("[Config] RCON           = {}:{}", rcon_host, rcon_port);
 
-        Self { backend_ws_url, token, log_file_path, game_dir, config_dir }
+        Self { backend_ws_url, token, log_file_path, game_dir, config_dir, rcon_host, rcon_port, rcon_password }
     }
 }
