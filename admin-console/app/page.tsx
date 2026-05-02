@@ -15,7 +15,6 @@ import ConfigPanelPage from './components/pages/ConfigPanelPage';
 import ActionLogsPage from './components/pages/ActionLogsPage';
 import PlayerInfoPage from './components/pages/PlayerInfoPage';
 import AdminUsersPage from './components/pages/AdminUsersPage';
-import PermissionsPage from './components/pages/PermissionsPage';
 import { PageId } from './types';
 
 const pageComponents: Record<PageId, React.ComponentType> = {
@@ -30,7 +29,6 @@ const pageComponents: Record<PageId, React.ComponentType> = {
   'action-logs': ActionLogsPage,
   'player-info': PlayerInfoPage,
   'admin-users': AdminUsersPage,
-  'permissions': PermissionsPage,
 };
 
 const breadcrumbMap: Record<PageId, { cat: string; page: string }> = {
@@ -45,7 +43,6 @@ const breadcrumbMap: Record<PageId, { cat: string; page: string }> = {
   'admin-users': { cat: '玩家管理', page: '网站管理员' },
   'config-file': { cat: '系统配置', page: '配置文件' },
   'config-panel': { cat: '系统配置', page: '配置面板' },
-  'permissions': { cat: '系统配置', page: '权限设置' },
 };
 
 function getHashPage(): PageId | null {
@@ -61,26 +58,31 @@ export default function Home() {
   const [dark, setDark] = useState(true);
   const [token, setToken] = useState<string | null>(null);
   const [username, setUsername] = useState<string | null>(null);
+  const [permissions, setPermissions] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     const saved = localStorage.getItem('token');
     if (saved) {
       setToken(saved);
       setUsername(localStorage.getItem('username'));
+      try { setPermissions(JSON.parse(localStorage.getItem('permissions') || '{}')); } catch {}
     }
   }, []);
 
   function handleLogin(t: string, u: string, _role: string) {
     setToken(t);
     setUsername(u);
+    try { setPermissions(JSON.parse(localStorage.getItem('permissions') || '{}')); } catch {}
   }
 
   function handleLogout() {
     localStorage.removeItem('token');
     localStorage.removeItem('username');
     localStorage.removeItem('role');
+    localStorage.removeItem('permissions');
     setToken(null);
     setUsername(null);
+    setPermissions({});
   }
 
   // 首次挂载时从 URL hash 恢复页面（仅客户端），无闪烁
@@ -120,7 +122,7 @@ export default function Home() {
 
   return (
     <>
-      <Sidebar collapsed={collapsed} activePage={activePage} onNavigate={handleNavigate} />
+      <Sidebar collapsed={collapsed} activePage={activePage} permissions={permissions} onNavigate={handleNavigate} />
       <div className="main-area">
         <Topbar
           category={breadcrumb.cat}

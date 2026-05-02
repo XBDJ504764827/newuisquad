@@ -30,6 +30,7 @@ export default function LoginPage({ onLogin }: Props) {
         localStorage.setItem('token', data.token);
         localStorage.setItem('username', data.username);
         localStorage.setItem('role', data.role);
+        localStorage.setItem('permissions', JSON.stringify(data.permissions || {}));
         onLogin(data.token, data.username, data.role);
       } else {
         setError(data.error || '登录失败');

@@ -18,6 +18,7 @@ pub mod squad_events;
 pub mod server_control;
 pub mod operation_logs;
 pub mod auth;
+pub mod auth_middleware;
 
 use axum::{Router, routing::{get, post, put}};
 use sqlx::PgPool;
@@ -71,5 +72,6 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v1/admins", get(admin_users::list).post(admin_users::create))
         .route("/api/v1/admins/{id}", put(admin_users::update).delete(admin_users::delete))
         .route("/agent/connect", get(agent_ws::handler))
-        .with_state(state)
+        .with_state(state.clone())
+        .layer(axum::Extension(state.jwt_secret.clone()))
 }

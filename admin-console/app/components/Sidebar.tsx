@@ -5,8 +5,23 @@ import { PageId, NavSectionDef } from '../types';
 interface SidebarProps {
   collapsed: boolean;
   activePage: PageId;
+  permissions: Record<string, boolean>;
   onNavigate: (page: PageId, category: string, pageName: string) => void;
 }
+
+const PAGE_PERMISSION_MAP: Record<string, string> = {
+  'summary': '控制面板',
+  'control-panel': '控制面板',
+  'chat-logs': '日志查询',
+  'fly-logs': '日志查询',
+  'kill-logs': '日志查询',
+  'match-logs': '日志查询',
+  'action-logs': '日志查询',
+  'player-info': '玩家管理',
+  'admin-users': '权限分配',
+  'config-file': '修改配置',
+  'config-panel': '修改配置',
+};
 
 const navSections: NavSectionDef[] = [
   {
@@ -134,20 +149,17 @@ const navSections: NavSectionDef[] = [
           </svg>
         ),
       },
-      {
-        id: 'permissions',
-        label: '权限设置',
-        icon: (
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-          </svg>
-        ),
-      },
     ],
   },
 ];
 
-export default function Sidebar({ collapsed, activePage, onNavigate }: SidebarProps) {
+export default function Sidebar({ collapsed, activePage, permissions, onNavigate }: SidebarProps) {
+  const hasPerm = (pageId: string): boolean => {
+    const permKey = PAGE_PERMISSION_MAP[pageId];
+    if (!permKey) return true;
+    return !!permissions[permKey];
+  };
+
   return (
     <aside className={`sidebar${collapsed ? ' collapsed' : ''}`}>
       <div className="sidebar-logo">
@@ -156,22 +168,26 @@ export default function Sidebar({ collapsed, activePage, onNavigate }: SidebarPr
       </div>
 
       <nav className="sidebar-nav">
-        {navSections.map((section) => (
-          <div key={section.label} className="nav-section">
-            <div className="nav-section-label">{section.label}</div>
-            {section.items.map((item) => (
-              <button
-                type="button"
-                key={item.id}
-                className={`nav-item${activePage === item.id ? ' active' : ''}`}
-                onClick={() => onNavigate(item.id, section.label, item.label)}
-              >
-                {item.icon}
-                <span className="nav-item-text">{item.label}</span>
-              </button>
-            ))}
-          </div>
-        ))}
+        {navSections.map((section) => {
+          const visibleItems = section.items.filter(item => hasPerm(item.id));
+          if (visibleItems.length === 0) return null;
+          return (
+            <div key={section.label} className="nav-section">
+              <div className="nav-section-label">{section.label}</div>
+              {visibleItems.map((item) => (
+                <button
+                  type="button"
+                  key={item.id}
+                  className={`nav-item${activePage === item.id ? ' active' : ''}`}
+                  onClick={() => onNavigate(item.id, section.label, item.label)}
+                >
+                  {item.icon}
+                  <span className="nav-item-text">{item.label}</span>
+                </button>
+              ))}
+            </div>
+          );
+        })}
       </nav>
     </aside>
   );

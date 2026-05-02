@@ -19,6 +19,14 @@ const PERM_KEYS = ['控制面板', '日志查询', '修改配置', '玩家管理
 type PermKey = typeof PERM_KEYS[number];
 type Permissions = Record<PermKey, boolean>;
 
+const PERM_DESCRIPTIONS: Record<PermKey, string> = {
+  '控制面板': '服务器控制、RCON命令、实时状态',
+  '日志查询': '飞天/击倒/玩家信息等日志查看',
+  '修改配置': '配置文件编辑、配置面板设置',
+  '玩家管理': '警告/踢出/封禁等玩家操作',
+  '权限分配': '添加/编辑/删除管理员账号',
+};
+
 const DEFAULT_PERMISSIONS: Permissions = {
   '控制面板': true,
   '日志查询': true,
@@ -33,6 +41,7 @@ export default function AdminUsersPage() {
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState<AdminUser | null>(null);
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
   const [form, setForm] = useState({
     username: '', password: '', role: '巡查员',
     steam_id64: '', notes: '',
@@ -87,11 +96,15 @@ export default function AdminUsersPage() {
     const data = await res.json();
     if (data.error) { setError(data.error); return; }
     setShowModal(false);
+    setSuccess(editing ? '管理员已更新' : '管理员已创建');
+    setTimeout(() => setSuccess(''), 3000);
     loadUsers();
   };
 
   const handleDelete = async (id: number) => {
     await fetch(`${API_BASE}/admins/${id}`, { method: 'DELETE' });
+    setSuccess('管理员已删除');
+    setTimeout(() => setSuccess(''), 3000);
     loadUsers();
   };
 
@@ -107,6 +120,9 @@ export default function AdminUsersPage() {
 
   return (
     <div className="page-view" style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      {success && (
+        <div style={{ padding: '8px 16px', background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)', borderRadius: 'var(--radius)', color: '#22c55e', fontSize: 13, fontWeight: 500 }}>{success}</div>
+      )}
       <div className="card">
         <div className="card-header">
           <div><div className="card-title">网站管理员列表</div><div className="card-sub">管理后台管理员账号与权限</div></div>
@@ -178,10 +194,14 @@ export default function AdminUsersPage() {
               <label style={{ fontSize: 12, color: 'var(--text2)' }}>备注</label>
               <input className="rcon-input" value={form.notes} onChange={e => setForm({...form, notes: e.target.value})} placeholder="备注信息" />
               <label style={{ fontSize: 12, color: 'var(--text2)', marginTop: 4 }}>模块权限</label>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {PERM_KEYS.map(k => (
-                  <label key={k} style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 12, color: 'var(--text2)' }}>
-                    <input type="checkbox" checked={!!form.permissions[k]} onChange={() => togglePerm(k)} />{k}
+                  <label key={k} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer', padding: '6px 8px', borderRadius: 'var(--radius)', background: 'var(--bg3)' }}>
+                    <input type="checkbox" checked={!!form.permissions[k]} onChange={() => togglePerm(k)} style={{ marginTop: 2 }} />
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 500 }}>{k}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 1 }}>{PERM_DESCRIPTIONS[k]}</div>
+                    </div>
                   </label>
                 ))}
               </div>
