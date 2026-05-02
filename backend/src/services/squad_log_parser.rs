@@ -493,23 +493,48 @@ pub fn parse_line(line: &str) -> Option<ParsedEvent> {
         return Some(ParsedEvent::PlayerDeath { player_name, steam64: steam, killer_steam64: killer_steam, weapon, logged_at: ts });
     }
 
-    // 17. 聊天消息: [Chat] PlayerName (SteamID): message
-    // 也支持 RCON 事件格式: [ChatAll] / [ChatTeam] / ChatAll: 等
-    if line.contains("[Chat") || line.to_lowercase().contains("chatall") || line.to_lowercase().contains("chatteam") {
-        let content = if let Some(pos) = line.find("[Chat]") { &line[pos + 6..] }
-            else if let Some(pos) = line.find("Chat:") { &line[pos + 5..] }
-            else { line };
-        let content = content.trim();
-        if let Some(colon_pos) = content.find(": ") {
-            let header = &content[..colon_pos];
-            let message = content[colon_pos + 2..].trim().to_string();
-            if let Some(paren_start) = header.rfind('(') {
-                if let Some(paren_end) = header.rfind(')') {
-                    let sid_str = &header[paren_start + 1..paren_end];
-                    let player_name = header[..paren_start].trim().to_string();
-                    if sid_str.chars().all(|c| c.is_ascii_digit()) && sid_str.len() >= 10 {
-                        let channel = if line.to_lowercase().contains("team") { "Team" } else { "All" };
-                        return Some(ParsedEvent::ChatMessage { player_name, steam64: sid_str.to_string(), message, channel: channel.to_string(), logged_at: ts });
+    // 17. 聊天消息 - SquadJS RCON 兼容格式
+    // 格式1 (RCON): [ChatAll] [Online IDs: EOS:xxx steam:xxx] PlayerName : Message
+    // 格式2 (日志): [ChatAll] PlayerName (SteamID): message
+    let chat_prefixes = ["[ChatAll]", "[ChatTeam]", "[ChatSquad]", "[ChatAdmin]"];
+    for prefix in &chat_prefixes {
+        if let Some(content) = line.strip_prefix(prefix) {
+            let content = content.trim();
+            let channel = if prefix.contains("Team") { "Team" }
+                else if prefix.contains("Squad") { "Squad" }
+                else if prefix.contains("Admin") { "Admin" }
+                else { "All" };
+
+            // SquadJS RCON 格式: [Online IDs:xxx] Name : Message
+            if content.starts_with("[Online IDs:") {
+                if let Some(bracket_end) = content.find(']') {
+                    let rest = content[bracket_end + 1..].trim();
+                    if let Some(colon_pos) = rest.find(" : ") {
+                        let player_name = rest[..colon_pos].trim().to_string();
+                        let message = rest[colon_pos + 3..].trim().to_string();
+                        if !player_name.is_empty() {
+                            // 从 Online IDs 中提取 steam64
+                            let ids = &content[1..bracket_end];
+                            let steam64 = if let Some(sp) = ids.find("steam: ") {
+                                ids[sp + 7..].split(|c: char| c == ' ' || c == ']').next().unwrap_or("").to_string()
+                            } else { String::new() };
+                            return Some(ParsedEvent::ChatMessage { player_name, steam64, message, channel: channel.to_string(), logged_at: ts });
+                        }
+                    }
+                }
+            }
+
+            // 日志格式: PlayerName (SteamID): message
+            if let Some(colon_pos) = content.find(": ") {
+                let header = &content[..colon_pos];
+                let message = content[colon_pos + 2..].trim().to_string();
+                if let Some(paren_start) = header.rfind('(') {
+                    if let Some(paren_end) = header.rfind(')') {
+                        let steam = &header[paren_start + 1..paren_end];
+                        let player_name = header[..paren_start].trim().to_string();
+                        if steam.len() >= 10 && steam.chars().all(|c| c.is_ascii_digit()) {
+                            return Some(ParsedEvent::ChatMessage { player_name, steam64: steam.to_string(), message, channel: channel.to_string(), logged_at: ts });
+                        }
                     }
                 }
             }
