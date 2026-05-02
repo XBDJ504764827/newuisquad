@@ -1,0 +1,121 @@
+use axum::{Json, extract::{State, Path, Query}, http::StatusCode};
+use serde::Deserialize;
+use crate::api::AppState;
+
+#[derive(Deserialize, Default)]
+pub struct PageQuery {
+    pub page: Option<i64>,
+    pub per_page: Option<i64>,
+    #[serde(default)]
+    pub steam64: Option<String>,
+}
+
+pub async fn fly_events(
+    State(state): State<AppState>,
+    Path(server_id): Path<i32>,
+    Query(q): Query<PageQuery>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let page = q.page.unwrap_or(1).max(1);
+    let per_page = q.per_page.unwrap_or(50).min(200);
+    let offset = (page - 1) * per_page;
+
+    let (total,) = sqlx::query_as::<_, (i64,)>(
+        "SELECT COUNT(*) FROM fly_events WHERE server_id=$1"
+    ).bind(server_id).fetch_one(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let items = sqlx::query_as::<_, (i32, i32, String, String, String, String, chrono::DateTime<chrono::Utc>)>(
+        "SELECT id, server_id, player_name, eos_id, steam64, event_type, logged_at FROM fly_events WHERE server_id=$1 ORDER BY logged_at DESC LIMIT $2 OFFSET $3"
+    ).bind(server_id).bind(per_page).bind(offset).fetch_all(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let data: Vec<serde_json::Value> = items.into_iter().map(|(id, sid, name, eos, steam, evt, ts)| {
+        serde_json::json!({ "id": id, "server_id": sid, "player_name": name, "eos_id": eos, "steam64": steam, "event_type": evt, "logged_at": ts })
+    }).collect();
+
+    Ok(Json(serde_json::json!({ "data": data, "total": total, "page": page, "per_page": per_page })))
+}
+
+pub async fn kill_events(
+    State(state): State<AppState>,
+    Path(server_id): Path<i32>,
+    Query(q): Query<PageQuery>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let page = q.page.unwrap_or(1).max(1);
+    let per_page = q.per_page.unwrap_or(50).min(200);
+    let offset = (page - 1) * per_page;
+
+    let total = if let Some(ref sid) = q.steam64 {
+        sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM kill_events WHERE server_id=$1 AND (attacker_steam64=$2 OR $2='')")
+            .bind(server_id).bind(sid).fetch_one(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.0
+    } else {
+        sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM kill_events WHERE server_id=$1")
+            .bind(server_id).fetch_one(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.0
+    };
+
+    let items = sqlx::query_as::<_, (i32, i32, String, String, String, String, f64, String, bool, bool, chrono::DateTime<chrono::Utc>)>(
+        "SELECT id, server_id, attacker_name, attacker_eos, attacker_steam64, victim_name, damage, weapon, is_kill, is_teamkill, logged_at FROM kill_events WHERE server_id=$1 ORDER BY logged_at DESC LIMIT $2 OFFSET $3"
+    ).bind(server_id).bind(per_page).bind(offset).fetch_all(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let data: Vec<serde_json::Value> = items.into_iter().map(|(id, sid, an, ae, as64, vn, dmg, wp, ik, itk, ts)| {
+        serde_json::json!({ "id": id, "server_id": sid, "attacker_name": an, "attacker_eos": ae, "attacker_steam64": as64, "victim_name": vn, "damage": dmg, "weapon": wp, "is_kill": ik, "is_teamkill": itk, "logged_at": ts })
+    }).collect();
+
+    Ok(Json(serde_json::json!({ "data": data, "total": total, "page": page, "per_page": per_page })))
+}
+
+pub async fn player_info(
+    State(state): State<AppState>,
+    Path(server_id): Path<i32>,
+    Query(q): Query<PageQuery>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let page = q.page.unwrap_or(1).max(1);
+    let per_page = q.per_page.unwrap_or(50).min(200);
+    let offset = (page - 1) * per_page;
+
+    let (items, total) = if let Some(ref name) = q.steam64 {
+        let total = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM player_info WHERE server_id=$1 AND (player_name ILIKE $2 OR steam64=$2)")
+            .bind(server_id).bind(format!("%{}%", name)).fetch_one(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.0;
+        let items = sqlx::query_as::<_, (i32, String, String, String, String, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)>(
+            "SELECT server_id, player_name, steam64, eos_id, ip, first_seen, last_seen FROM player_info WHERE server_id=$1 AND (player_name ILIKE $2 OR steam64=$2) ORDER BY last_seen DESC LIMIT $3 OFFSET $4"
+        ).bind(server_id).bind(format!("%{}%", name)).bind(per_page).bind(offset).fetch_all(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        (items, total)
+    } else {
+        let total = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM player_info WHERE server_id=$1")
+            .bind(server_id).fetch_one(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.0;
+        let items = sqlx::query_as::<_, (i32, String, String, String, String, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)>(
+            "SELECT server_id, player_name, steam64, eos_id, ip, first_seen, last_seen FROM player_info WHERE server_id=$1 ORDER BY last_seen DESC LIMIT $2 OFFSET $3"
+        ).bind(server_id).bind(per_page).bind(offset).fetch_all(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        (items, total)
+    };
+
+    // 收集需要从 Steam 查询的 steam64（玩家名为空或显示为 '-'）
+    let missing_ids: Vec<String> = items.iter()
+        .filter(|(_, name, s64, _, _, _, _)| (name.is_empty() || name == "-") && !s64.is_empty())
+        .map(|(_, _, s64, _, _, _, _)| s64.clone())
+        .collect();
+
+    // 如果有缺失的名称，调用 Steam API
+    let steam_names = if !missing_ids.is_empty() && !state.steam_api_key.is_empty() {
+        crate::services::steam_service::fetch_player_names(&state.steam_api_key, &missing_ids).await
+    } else {
+        std::collections::HashMap::new()
+    };
+
+    // 更新数据库中缺失的玩家名
+    for (sid, name, s64, _, _, _, _) in &items {
+        if (name.is_empty() || name == "-") && !s64.is_empty() {
+            if let Some(steam_name) = steam_names.get(s64) {
+                let _ = sqlx::query("UPDATE player_info SET player_name=$1 WHERE server_id=$2 AND steam64=$3")
+                    .bind(steam_name).bind(sid).bind(s64).execute(&state.pool).await;
+            }
+        }
+    }
+
+    let data: Vec<serde_json::Value> = items.into_iter().map(|(sid, name, s64, eos, ip, fs, ls)| {
+        let display_name = if name.is_empty() || name == "-" {
+            steam_names.get(&s64).cloned().unwrap_or_else(|| name.clone())
+        } else { name };
+        serde_json::json!({ "server_id": sid, "player_name": display_name, "steam64": s64, "eos_id": eos, "ip": ip, "first_seen": fs, "last_seen": ls })
+    }).collect();
+
+    Ok(Json(serde_json::json!({ "data": data, "total": total, "page": page, "per_page": per_page })))
+}

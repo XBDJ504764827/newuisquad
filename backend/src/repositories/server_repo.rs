@@ -46,6 +46,9 @@ pub async fn delete_server(pool: &PgPool, id: i32) -> Result<bool, sqlx::Error> 
     sqlx::query("DELETE FROM damage_notify_settings WHERE server_id = $1").bind(id).execute(&mut *tx).await?;
     sqlx::query("DELETE FROM abnormal_damage_rules WHERE server_id = $1").bind(id).execute(&mut *tx).await?;
     sqlx::query("DELETE FROM abnormal_damage_logs WHERE server_id = $1").bind(id).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM player_info WHERE server_id = $1").bind(id).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM kill_events WHERE server_id = $1").bind(id).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM fly_events WHERE server_id = $1").bind(id).execute(&mut *tx).await?;
     sqlx::query("DELETE FROM abnormal_damage_config WHERE server_id = $1").bind(id).execute(&mut *tx).await?;
     let result = sqlx::query("DELETE FROM servers WHERE id = $1")
         .bind(id)

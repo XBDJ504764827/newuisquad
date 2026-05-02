@@ -130,6 +130,35 @@ async fn handle_socket(
                                 &pool, sid, &entry,
                             )
                             .await;
+
+                            // Squad 日志解析：提取结构化事件
+                            use crate::services::squad_log_parser::{parse_line, ParsedEvent};
+                            if let Some(raw) = &entry.raw_line {
+                                if let Some(event) = parse_line(raw) {
+                                    match event {
+                                        ParsedEvent::PlayerLogin { player_name, eos_id, steam64, ip, logged_at } => {
+                                            if !steam64.is_empty() {
+                                                let _ = sqlx::query(
+                                                    "INSERT INTO player_info (server_id, player_name, steam64, eos_id, ip, first_seen, last_seen) VALUES ($1,$2,$3,$4,$5,$6,$6) ON CONFLICT DO NOTHING"
+                                                ).bind(sid).bind(&player_name).bind(&steam64).bind(&eos_id).bind(&ip).bind(logged_at).execute(&pool).await;
+                                                let _ = sqlx::query(
+                                                    "UPDATE player_info SET player_name=$1, eos_id=$2, ip=$3, last_seen=$4 WHERE server_id=$5 AND steam64=$6"
+                                                ).bind(&player_name).bind(&eos_id).bind(&ip).bind(logged_at).bind(sid).bind(&steam64).execute(&pool).await;
+                                            }
+                                        }
+                                        ParsedEvent::FlyEvent { player_name, eos_id, steam64, event_type, logged_at } => {
+                                            let _ = sqlx::query(
+                                                "INSERT INTO fly_events (server_id, player_name, eos_id, steam64, event_type, logged_at) VALUES ($1,$2,$3,$4,$5,$6)"
+                                            ).bind(sid).bind(&player_name).bind(&eos_id).bind(&steam64).bind(&event_type).bind(logged_at).execute(&pool).await;
+                                        }
+                                        ParsedEvent::KillEvent { attacker_name, attacker_eos, attacker_steam64, victim_name, damage, weapon, is_kill, is_teamkill, logged_at } => {
+                                            let _ = sqlx::query(
+                                                "INSERT INTO kill_events (server_id, attacker_name, attacker_eos, attacker_steam64, victim_name, damage, weapon, is_kill, is_teamkill, logged_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"
+                                            ).bind(sid).bind(&attacker_name).bind(&attacker_eos).bind(&attacker_steam64).bind(&victim_name).bind(damage).bind(&weapon).bind(is_kill).bind(is_teamkill).bind(logged_at).execute(&pool).await;
+                                        }
+                                    }
+                                }
+                            }
                         }
                         AgentMessage::FileReadResult { request_id, .. }
                         | AgentMessage::FileWriteResult { request_id, .. }

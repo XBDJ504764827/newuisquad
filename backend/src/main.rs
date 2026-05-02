@@ -33,6 +33,7 @@ async fn main() -> anyhow::Result<()> {
         pool: pool.clone(),
         log_broadcast: Some(Arc::new(log_tx)),
         agent_pool: Some(agent_pool),
+        steam_api_key: config.steam_api_key.clone(),
     };
 
     // 启动误杀检测服务

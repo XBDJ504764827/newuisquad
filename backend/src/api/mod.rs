@@ -14,6 +14,7 @@ pub mod team_settings;
 pub mod seed_settings;
 pub mod damage_notify;
 pub mod abnormal_damage;
+pub mod squad_events;
 
 use axum::{Router, routing::{get, post, put}};
 use sqlx::PgPool;
@@ -27,6 +28,7 @@ pub struct AppState {
     pub pool: PgPool,
     pub log_broadcast: Option<Arc<broadcast::Sender<LogEntry>>>,
     pub agent_pool: Option<AgentPool>,
+    pub steam_api_key: String,
 }
 
 pub fn build_router(state: AppState) -> Router {
@@ -53,6 +55,9 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v1/servers/{id}/abnormal-damage-rules", get(abnormal_damage::list_rules).post(abnormal_damage::create_rule))
         .route("/api/v1/servers/{id}/abnormal-damage-rules/{rid}", axum::routing::delete(abnormal_damage::delete_rule))
         .route("/api/v1/servers/{id}/abnormal-damage-logs", get(abnormal_damage::list_logs))
+        .route("/api/v1/servers/{id}/fly-events", get(squad_events::fly_events))
+        .route("/api/v1/servers/{id}/kill-events", get(squad_events::kill_events))
+        .route("/api/v1/servers/{id}/player-info", get(squad_events::player_info))
         .route("/api/v1/admins", get(admin_users::list).post(admin_users::create))
         .route("/api/v1/admins/{id}", put(admin_users::update).delete(admin_users::delete))
         .route("/agent/connect", get(agent_ws::handler))

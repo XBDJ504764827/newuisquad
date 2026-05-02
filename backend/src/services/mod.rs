@@ -9,3 +9,5 @@ pub mod damage_notify_service;
 pub mod abnormal_damage_service;
 pub mod tk_service;
 pub mod broadcast_handler;
+pub mod squad_log_parser;
+pub mod steam_service;
