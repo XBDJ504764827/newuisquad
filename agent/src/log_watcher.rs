@@ -5,8 +5,11 @@ use tokio::sync::mpsc;
 use crate::protocol::{AgentMessage, LogEntry};
 
 pub fn start_watching(file_path: PathBuf, msg_tx: mpsc::UnboundedSender<AgentMessage>) {
+    let path_display = file_path.display().to_string();
+    eprintln!("[LogWatcher] 启动监听: {}", path_display);
     std::thread::spawn(move || {
         let mut last_pos = std::fs::metadata(&file_path).map(|m| m.len()).unwrap_or(0);
+        eprintln!("[LogWatcher] 初始文件大小: {} bytes, 起始位置: {}", std::fs::metadata(&file_path).map(|m| m.len()).unwrap_or(0), last_pos);
         let (event_tx, event_rx) = std::sync::mpsc::channel::<notify::Result<Event>>();
 
         let mut watcher = match RecommendedWatcher::new(
@@ -40,12 +43,15 @@ pub fn start_watching(file_path: PathBuf, msg_tx: mpsc::UnboundedSender<AgentMes
                                 last_pos = file_len;
 
                                 if let Ok(content) = String::from_utf8(buf) {
+                                    let line_count = content.lines().count();
+                                    eprintln!("[LogWatcher] 检测到文件变化, 新增 {} 行", line_count);
                                     for line in content.lines() {
                                         let line = line.trim();
                                         if line.is_empty() {
                                             continue;
                                         }
                                         let entry = parse_log_line(line);
+                                        eprintln!("[LogWatcher] -> [{}] {}", entry.log_level, entry.message.chars().take(80).collect::<String>());
                                         let _ = msg_tx.send(AgentMessage::Log { data: entry });
                                     }
                                 }

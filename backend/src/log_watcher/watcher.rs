@@ -53,7 +53,7 @@ pub fn start_watching(
                     for line in content.lines() {
                         let line = line.trim();
                         if line.is_empty() { continue; }
-                        let entry = parse_log_line(line);
+                        let entry = parse_log_line(line, server_id);
                         let _ = tx_clone.send(entry.clone());
                         let _ = crate::repositories::server_log_repo::insert_log_entry(
                             &db_pool, server_id, &entry,
@@ -67,7 +67,7 @@ pub fn start_watching(
     tx
 }
 
-fn parse_log_line(line: &str) -> LogEntry {
+fn parse_log_line(line: &str, server_id: i32) -> LogEntry {
     let log_level = if line.contains("[Error]") || line.contains("error") {
         "ERROR"
     } else if line.contains("[Warn]") || line.contains("Warning") {
@@ -87,6 +87,7 @@ fn parse_log_line(line: &str) -> LogEntry {
         else { "General" };
 
     LogEntry {
+        server_id,
         log_level: log_level.to_string(),
         category: Some(category.to_string()),
         message: line.to_string(),

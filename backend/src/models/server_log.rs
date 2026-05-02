@@ -23,6 +23,7 @@ pub struct LogPage {
 
 #[derive(Debug, Serialize, Clone)]
 pub struct LogEntry {
+    pub server_id: i32,
     pub log_level: String,
     pub category: Option<String>,
     pub message: String,

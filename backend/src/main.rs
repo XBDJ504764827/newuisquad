@@ -26,12 +26,19 @@ async fn main() -> anyhow::Result<()> {
     // Agent 连接池（生产环境日志来源）
     let agent_pool = api::agent_ws::AgentPool::new();
     let log_tx = agent_pool.log_tx();
+    let log_rx1 = log_tx.subscribe();
+    let log_rx2 = log_tx.subscribe();
 
     let state = api::AppState {
-        pool,
+        pool: pool.clone(),
         log_broadcast: Some(Arc::new(log_tx)),
         agent_pool: Some(agent_pool),
     };
+
+    // 启动误杀检测服务
+    services::tk_service::start_tk_monitor(pool.clone(), log_rx1);
+    // 启动广播处理服务
+    services::broadcast_handler::start_broadcast_handler(pool, log_rx2);
 
     let cors = CorsLayer::new()
         .allow_origin(Any)

@@ -93,6 +93,7 @@ async fn handle_socket(
     server_id: String,
 ) {
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<AgentMessage>();
+    let sid: i32 = server_id.parse().unwrap_or(0);
     agent_pool
         .agents
         .write()
@@ -113,15 +114,20 @@ async fn handle_socket(
                     match &agent_msg {
                         AgentMessage::Log { data } => {
                             let entry = LogEntry {
+                                server_id: sid,
                                 log_level: data.log_level.clone(),
                                 category: data.category.clone(),
                                 message: data.message.clone(),
                                 raw_line: data.raw_line.clone(),
                                 logged_at: data.logged_at,
                             };
-                            let _ = log_tx.send(entry.clone());
+                            tracing::debug!(server_id = sid, level = %data.log_level, "收到日志: {}", data.message.chars().take(60).collect::<String>());
+                            match log_tx.send(entry.clone()) {
+                                Ok(n) => tracing::debug!(server_id = sid, receivers = n, "日志已广播"),
+                                Err(e) => tracing::error!(server_id = sid, error = %e, "日志广播失败"),
+                            }
                             let _ = crate::repositories::server_log_repo::insert_log_entry(
-                                &pool, 1, &entry,
+                                &pool, sid, &entry,
                             )
                             .await;
                         }

@@ -72,6 +72,25 @@ export default function ConfigPanelPage() {
   const [seedSaving, setSeedSaving] = useState(false);
   const [seedError, setSeedError] = useState('');
   const [seedForm, setSeedForm] = useState({ enabled: false, player_threshold: 20, vehicle_claim: true, vehicle_fill: true, deploy_restrict: false, kit_restrict: false, heavy_vehicle_require: false, respawn_timer: true, use_enemy_vehicle: false });
+  // Damage notify settings state
+  const [damageNotifyLoading, setDamageNotifyLoading] = useState(false);
+  const [damageNotifySaving, setDamageNotifySaving] = useState(false);
+  const [damageNotifyError, setDamageNotifyError] = useState('');
+  const [damageNotifyForm, setDamageNotifyForm] = useState({ enabled: false, keyword: '!damage' });
+  // Abnormal damage state
+  const [abDamageLoading, setAbDamageLoading] = useState(false);
+  const [abDamageSaving, setAbDamageSaving] = useState(false);
+  const [abDamageError, setAbDamageError] = useState('');
+  const [abDamageEnabled, setAbDamageEnabled] = useState(false);
+  const [abDamageRules, setAbDamageRules] = useState<{ id: number; server_id: number; max_damage: number; created_at: string }[]>([]);
+  const [newAbDamage, setNewAbDamage] = useState('');
+  const [abDamageLogs, setAbDamageLogs] = useState<{
+    id: number; player_name: string; player_steamid64: string; victim_name: string;
+    victim_steamid64: string; weapon: string; damage: number;
+    attacker_faction: string; victim_faction: string; logged_at: string;
+  }[]>([]);
+  const [abDamageLogsLoading, setAbDamageLogsLoading] = useState(false);
+  const [abDamageLogsQuery, setAbDamageLogsQuery] = useState('');
 
   useEffect(() => {
     fetch(`${API_BASE}/servers`)
@@ -119,6 +138,21 @@ export default function ConfigPanelPage() {
     fetch(`${API_BASE}/servers/${selectedServerId}/seed-settings`).then(r => r.json())
       .then(d => { const f: Record<string, boolean | number> = { enabled: d.enabled, player_threshold: d.player_threshold, vehicle_claim: d.vehicle_claim, vehicle_fill: d.vehicle_fill, deploy_restrict: d.deploy_restrict, kit_restrict: d.kit_restrict, heavy_vehicle_require: d.heavy_vehicle_require, respawn_timer: d.respawn_timer, use_enemy_vehicle: d.use_enemy_vehicle }; setSeedForm(f as any); setSeedLoading(false); })
       .catch(() => setSeedLoading(false));
+    // 加载伤害通知设置
+    setDamageNotifyLoading(true);
+    fetch(`${API_BASE}/servers/${selectedServerId}/damage-notify-settings`).then(r => r.json())
+      .then(d => { setDamageNotifyForm({ enabled: d.enabled, keyword: d.keyword || '!damage' }); setDamageNotifyLoading(false); })
+      .catch(() => setDamageNotifyLoading(false));
+    // 加载异常伤害设置
+    setAbDamageLoading(true);
+    fetch(`${API_BASE}/servers/${selectedServerId}/abnormal-damage-config`).then(r => r.json())
+      .then(d => { setAbDamageEnabled(d.enabled); setAbDamageLoading(false); })
+      .catch(() => setAbDamageLoading(false));
+    fetch(`${API_BASE}/servers/${selectedServerId}/abnormal-damage-rules`).then(r => r.json())
+      .then(d => setAbDamageRules(d.data || []))
+      .catch(() => {});
+    // 加载异常伤害日志
+    fetchAbDamageLogs();
   }, [selectedServerId]);
 
   const saveTkSettings = useCallback(async () => {
@@ -162,6 +196,52 @@ export default function ConfigPanelPage() {
     const data = await res.json(); setSeedSaving(false);
     if (data.error) setSeedError(data.error);
   }, [selectedServerId, seedForm]);
+
+  const saveDamageNotifySettings = useCallback(async () => {
+    if (!selectedServerId) return; setDamageNotifySaving(true); setDamageNotifyError('');
+    const res = await fetch(`${API_BASE}/servers/${selectedServerId}/damage-notify-settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(damageNotifyForm) });
+    const data = await res.json(); setDamageNotifySaving(false);
+    if (data.error) setDamageNotifyError(data.error);
+  }, [selectedServerId, damageNotifyForm]);
+
+  const saveAbDamageConfig = useCallback(async () => {
+    if (!selectedServerId) return; setAbDamageSaving(true); setAbDamageError('');
+    const res = await fetch(`${API_BASE}/servers/${selectedServerId}/abnormal-damage-config`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: abDamageEnabled }) });
+    const data = await res.json(); setAbDamageSaving(false);
+    if (data.error) setAbDamageError(data.error);
+  }, [selectedServerId, abDamageEnabled]);
+
+  const addAbDamageRule = useCallback(async () => {
+    if (!selectedServerId || !newAbDamage) return;
+    const v = parseInt(newAbDamage);
+    if (!v || v <= 0) return;
+    const res = await fetch(`${API_BASE}/servers/${selectedServerId}/abnormal-damage-rules`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ max_damage: v }) });
+    const data = await res.json();
+    setAbDamageRules(prev => [...prev, data]);
+    setNewAbDamage('');
+  }, [selectedServerId, newAbDamage]);
+
+  const delAbDamageRule = useCallback(async (id: number) => {
+    await fetch(`${API_BASE}/servers/${selectedServerId}/abnormal-damage-rules/${id}`, { method: 'DELETE' });
+    setAbDamageRules(prev => prev.filter(r => r.id !== id));
+  }, [selectedServerId]);
+
+  const fetchAbDamageLogs = useCallback(async (playerName?: string) => {
+    if (!selectedServerId) return;
+    setAbDamageLogsLoading(true);
+    const params = new URLSearchParams({ limit: '200' });
+    if (playerName) params.set('player_name', playerName);
+    try {
+      const res = await fetch(`${API_BASE}/servers/${selectedServerId}/abnormal-damage-logs?${params}`);
+      const data = await res.json();
+      setAbDamageLogs(data.data || []);
+    } catch {}
+    setAbDamageLogsLoading(false);
+  }, [selectedServerId]);
+
+  const handleAbDamageLogsSearch = useCallback(() => {
+    fetchAbDamageLogs(abDamageLogsQuery || undefined);
+  }, [fetchAbDamageLogs, abDamageLogsQuery]);
 
   const addAnnouncement = useCallback(async () => {
     if (!selectedServerId || !newAnn.content) return;
@@ -467,8 +547,142 @@ export default function ConfigPanelPage() {
             )}
           </div>
         )}
-        {activeTab === 'tab-9' && <div className="tab-content" style={{ display: 'block' }}><h4>伤害通知</h4><p style={{ color: 'var(--text3)', fontSize: 12, marginTop: 8 }}>HUD 伤害显示开关及样式。（功能UI待实现）</p></div>}
-        {activeTab === 'tab-10' && <div className="tab-content" style={{ display: 'block' }}><h4>异常伤害</h4><p style={{ color: 'var(--text3)', fontSize: 12, marginTop: 8 }}>定义过高伤害的检测阈值及反制措施。（功能UI待实现）</p></div>}
+        {activeTab === 'tab-9' && (
+          <div className="tab-content" style={{ display: 'block' }}>
+            <h4 style={{ marginBottom: 20 }}>伤害通知</h4>
+            {!selectedServerId ? (
+              <p style={{ color: 'var(--text3)', fontSize: 12 }}>请先添加游戏服务器。</p>
+            ) : damageNotifyLoading ? (
+              <p style={{ color: 'var(--text3)', fontSize: 12 }}>加载中...</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 24, maxWidth: 500 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={damageNotifyForm.enabled} onChange={e => setDamageNotifyForm({...damageNotifyForm, enabled: e.target.checked})} />
+                  <div>
+                    <div style={{ fontWeight: 500 }}>开启伤害通知功能</div>
+                    <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>开启后，玩家可通过关键字查询 HUD 伤害通知</div>
+                  </div>
+                </label>
+
+                <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+                  <label style={{ fontSize: 12, color: 'var(--text2)', display: 'block', marginBottom: 6 }}>玩家触发关键字</label>
+                  <input className="rcon-input" style={{ width: 200 }} value={damageNotifyForm.keyword}
+                    onChange={e => setDamageNotifyForm({...damageNotifyForm, keyword: e.target.value})}
+                    placeholder="!damage" />
+                  <p style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+                    玩家在聊天中发送此关键字即可开启伤害通知。{!damageNotifyForm.enabled && <span style={{ color: 'var(--red)' }}>当前功能已关闭，关键字不会生效。</span>}
+                  </p>
+                </div>
+
+                {damageNotifyError && <div style={{ color: 'var(--red)', fontSize: 12 }}>{damageNotifyError}</div>}
+
+                <button className="rcon-btn" style={{ width: 'auto', padding: '10px 24px' }} onClick={saveDamageNotifySettings} disabled={damageNotifySaving}>
+                  {damageNotifySaving ? '保存中...' : '保存设置'}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+        {activeTab === 'tab-10' && (
+          <div className="tab-content" style={{ display: 'block' }}>
+            <h4 style={{ marginBottom: 20 }}>异常伤害</h4>
+            {!selectedServerId ? (
+              <p style={{ color: 'var(--text3)', fontSize: 12 }}>请先添加游戏服务器。</p>
+            ) : abDamageLoading ? (
+              <p style={{ color: 'var(--text3)', fontSize: 12 }}>加载中...</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 24, maxWidth: 560 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={abDamageEnabled} onChange={e => setAbDamageEnabled(e.target.checked)} />
+                  <div>
+                    <div style={{ fontWeight: 500 }}>开启异常伤害检测</div>
+                    <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>开启后，将监控玩家造成的伤害是否超过设定的最高值</div>
+                  </div>
+                </label>
+
+                <div style={{ borderTop: '1px solid var(--border)', paddingTop: 20 }}>
+                  <div style={{ fontWeight: 500, marginBottom: 12 }}>伤害最高值规则</div>
+                  {abDamageRules.length === 0 && (
+                    <p style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 12 }}>暂无规则，请添加伤害最高值</p>
+                  )}
+                  {abDamageRules.map(r => (
+                    <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
+                      <span style={{ flex: 1, fontSize: 13 }}>最高伤害值：<strong>{r.max_damage}</strong></span>
+                      <span className="badge red" style={{ cursor: 'pointer', fontSize: 10 }} onClick={() => delAbDamageRule(r.id)}>删除</span>
+                    </div>
+                  ))}
+                  <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                    <input className="rcon-input" type="number" min={1} style={{ flex: 1 }} placeholder="输入伤害最高值" value={newAbDamage}
+                      onChange={e => setNewAbDamage(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && addAbDamageRule()} />
+                    <button className="rcon-btn" style={{ width: 'auto', padding: '8px 14px', fontSize: 12 }} onClick={addAbDamageRule}>添加</button>
+                  </div>
+                  <p style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>当玩家造成的单次伤害超过该值时，将被记录为异常伤害事件</p>
+                </div>
+
+                {abDamageError && <div style={{ color: 'var(--red)', fontSize: 12 }}>{abDamageError}</div>}
+
+                <button className="rcon-btn" style={{ width: 'auto', padding: '10px 24px' }} onClick={saveAbDamageConfig} disabled={abDamageSaving}>
+                  {abDamageSaving ? '保存中...' : '保存设置'}
+                </button>
+
+                <div style={{ borderTop: '1px solid var(--border)', paddingTop: 24, marginTop: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+                    <h4 style={{ margin: 0, fontSize: 14 }}>异常伤害记录</h4>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <input className="rcon-input" style={{ width: 180, fontSize: 12 }} placeholder="搜索玩家名称..."
+                        value={abDamageLogsQuery} onChange={e => setAbDamageLogsQuery(e.target.value)}
+                        onKeyDown={e => e.key === 'Enter' && handleAbDamageLogsSearch()} />
+                      <button className="rcon-btn" style={{ width: 'auto', padding: '6px 12px', fontSize: 12 }} onClick={handleAbDamageLogsSearch}>搜索</button>
+                      <span className="badge gray" style={{ cursor: 'pointer' }} onClick={() => { setAbDamageLogsQuery(''); fetchAbDamageLogs(); }}>全部</span>
+                    </div>
+                  </div>
+
+                  {abDamageLogsLoading ? (
+                    <p style={{ color: 'var(--text3)', fontSize: 12 }}>加载中...</p>
+                  ) : abDamageLogs.length === 0 ? (
+                    <div style={{ padding: '32px 0', textAlign: 'center', color: 'var(--text3)', fontSize: 13 }}>
+                      暂无异常伤害记录
+                    </div>
+                  ) : (
+                    <div style={{ overflowX: 'auto' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                        <thead>
+                          <tr style={{ borderBottom: '2px solid var(--border)', textAlign: 'left' }}>
+                            <th style={{ padding: '8px 6px', color: 'var(--text3)', fontWeight: 500, whiteSpace: 'nowrap' }}>时间</th>
+                            <th style={{ padding: '8px 6px', color: 'var(--text3)', fontWeight: 500, whiteSpace: 'nowrap' }}>攻击者</th>
+                            <th style={{ padding: '8px 6px', color: 'var(--text3)', fontWeight: 500, whiteSpace: 'nowrap' }}>SteamID64</th>
+                            <th style={{ padding: '8px 6px', color: 'var(--text3)', fontWeight: 500, whiteSpace: 'nowrap' }}>阵营</th>
+                            <th style={{ padding: '8px 6px', color: 'var(--text3)', fontWeight: 500, whiteSpace: 'nowrap' }}>武器</th>
+                            <th style={{ padding: '8px 6px', color: 'var(--text3)', fontWeight: 500, whiteSpace: 'nowrap' }}>伤害值</th>
+                            <th style={{ padding: '8px 6px', color: 'var(--text3)', fontWeight: 500, whiteSpace: 'nowrap' }}>被伤害者</th>
+                            <th style={{ padding: '8px 6px', color: 'var(--text3)', fontWeight: 500, whiteSpace: 'nowrap' }}>对方阵营</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {abDamageLogs.map(log => (
+                            <tr key={log.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                              <td style={{ padding: '6px', whiteSpace: 'nowrap', fontSize: 11 }}>
+                                {new Date(log.logged_at + 'Z').toLocaleString()}
+                              </td>
+                              <td style={{ padding: '6px', fontWeight: 500 }}>{log.player_name}</td>
+                              <td style={{ padding: '6px', fontFamily: 'monospace', fontSize: 11, color: 'var(--text2)' }}>{log.player_steamid64}</td>
+                              <td style={{ padding: '6px', fontSize: 11 }}>{log.attacker_faction || '-'}</td>
+                              <td style={{ padding: '6px' }}><span className="badge blue" style={{ fontSize: 10 }}>{log.weapon}</span></td>
+                              <td style={{ padding: '6px', color: 'var(--red)', fontWeight: 600 }}>{log.damage}</td>
+                              <td style={{ padding: '6px', fontWeight: 500 }}>{log.victim_name}</td>
+                              <td style={{ padding: '6px', fontSize: 11 }}>{log.victim_faction || '-'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

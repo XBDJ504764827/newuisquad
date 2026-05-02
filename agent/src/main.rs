@@ -10,8 +10,21 @@ use tokio::sync::{mpsc, Mutex};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // 从 exe 同目录加载 .env
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let env_path = exe_dir.join(".env");
+            eprintln!("[Env] 尝试加载: {}", env_path.display());
+            match dotenvy::from_path(&env_path) {
+                Ok(_) => eprintln!("[Env] 加载成功"),
+                Err(e) => eprintln!("[Env] 加载失败: {}", e),
+            }
+        }
+    }
+
+    // 不兜底加载当前目录的 .env，避免意外覆盖
+
     tracing_subscriber::fmt::init();
-    let _ = dotenvy::dotenv();
 
     let config = config::Config::from_env();
     tracing::info!("Agent 启动, token: {}...", &config.token[..16.min(config.token.len())]);
@@ -41,12 +54,12 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // 处理来自后端的命令（Channel B → file_ops，结果 → Channel A）
-    let game_dir = config.game_dir.clone();
+    let config_dir = config.config_dir.clone();
     let cmd_tx = to_ws_tx.clone();
     let cmd_handle = tokio::spawn(async move {
         let mut rx = to_agent_rx;
         while let Some(cmd) = rx.recv().await {
-            file_ops::handle_command(cmd, &cmd_tx, &game_dir).await;
+            file_ops::handle_command(cmd, &cmd_tx, &config_dir).await;
         }
     });
 

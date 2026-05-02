@@ -5,3 +5,7 @@ pub mod admin_user_service;
 pub mod tk_settings_service;
 pub mod afk_settings_service;
 pub mod broadcast_service;
+pub mod damage_notify_service;
+pub mod abnormal_damage_service;
+pub mod tk_service;
+pub mod broadcast_handler;

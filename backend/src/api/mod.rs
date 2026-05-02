@@ -12,6 +12,8 @@ pub mod announcements;
 pub mod auto_replies;
 pub mod team_settings;
 pub mod seed_settings;
+pub mod damage_notify;
+pub mod abnormal_damage;
 
 use axum::{Router, routing::{get, post, put}};
 use sqlx::PgPool;
@@ -46,6 +48,11 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v1/servers/{id}/auto-replies/{rid}", axum::routing::delete(auto_replies::delete))
         .route("/api/v1/servers/{id}/team-settings", get(team_settings::get).put(team_settings::update))
         .route("/api/v1/servers/{id}/seed-settings", get(seed_settings::get).put(seed_settings::update))
+        .route("/api/v1/servers/{id}/damage-notify-settings", get(damage_notify::get).put(damage_notify::update))
+        .route("/api/v1/servers/{id}/abnormal-damage-config", get(abnormal_damage::get_config).put(abnormal_damage::update_config))
+        .route("/api/v1/servers/{id}/abnormal-damage-rules", get(abnormal_damage::list_rules).post(abnormal_damage::create_rule))
+        .route("/api/v1/servers/{id}/abnormal-damage-rules/{rid}", axum::routing::delete(abnormal_damage::delete_rule))
+        .route("/api/v1/servers/{id}/abnormal-damage-logs", get(abnormal_damage::list_logs))
         .route("/api/v1/admins", get(admin_users::list).post(admin_users::create))
         .route("/api/v1/admins/{id}", put(admin_users::update).delete(admin_users::delete))
         .route("/agent/connect", get(agent_ws::handler))

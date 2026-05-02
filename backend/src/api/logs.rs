@@ -34,7 +34,7 @@ pub async fn stream(
     ws.on_upgrade(move |socket| handle_ws(socket, state, server_id))
 }
 
-async fn handle_ws(mut socket: WebSocket, state: AppState, _server_id: i32) {
+async fn handle_ws(mut socket: WebSocket, state: AppState, server_id: i32) {
     let Some(tx) = &state.log_broadcast else {
         let _ = socket.send(Message::Text("{\"error\":\"日志监听未启动\"}".into())).await;
         return;
@@ -44,6 +44,9 @@ async fn handle_ws(mut socket: WebSocket, state: AppState, _server_id: i32) {
     loop {
         match rx.recv().await {
             Ok(entry) => {
+                if entry.server_id != server_id {
+                    continue;
+                }
                 let json = serde_json::to_string(&entry).unwrap_or_default();
                 if socket.send(Message::Text(json.into())).await.is_err() {
                     break;

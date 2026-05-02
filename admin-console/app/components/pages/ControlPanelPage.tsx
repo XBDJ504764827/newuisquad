@@ -58,8 +58,10 @@ export default function ControlPanelPage() {
     const ws = new WebSocket(`ws://192.168.0.137:8000/api/v1/servers/${selectedServer.id}/logs/stream`);
     ws.onmessage = (e) => {
       try {
-        const entry: LogEntry = JSON.parse(e.data);
-        setLogs(prev => [...prev.slice(-200), entry]);
+        const entry = JSON.parse(e.data);
+        if (entry.message && entry.log_level) {
+          setLogs(prev => [...prev.slice(-200), entry]);
+        }
       } catch {}
     };
     wsRef.current = ws;

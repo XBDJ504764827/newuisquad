@@ -9,3 +9,5 @@ pub mod announcement;
 pub mod auto_reply;
 pub mod team_settings;
 pub mod seed_settings;
+pub mod damage_notify_settings;
+pub mod abnormal_damage;

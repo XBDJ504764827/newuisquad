@@ -1,0 +1,6 @@
+CREATE TABLE IF NOT EXISTS abnormal_damage_rules (
+    id SERIAL PRIMARY KEY,
+    server_id INTEGER NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+    max_damage INTEGER NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
