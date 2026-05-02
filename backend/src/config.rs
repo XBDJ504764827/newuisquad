@@ -7,6 +7,9 @@ pub struct Config {
     pub server_port: u16,
     pub log_file_path: String,
     pub steam_api_key: String,
+    pub init_admin_username: String,
+    pub init_admin_password: String,
+    pub jwt_secret: String,
 }
 
 impl Config {
@@ -24,6 +27,9 @@ impl Config {
                 .unwrap_or_else(|_| "/var/log/game/server.log".into()),
             steam_api_key: env::var("STEAM_API_KEY")
                 .unwrap_or_default(),
+            init_admin_username: env::var("INIT_ADMIN_USERNAME").unwrap_or_else(|_| "admin".into()),
+            init_admin_password: env::var("INIT_ADMIN_PASSWORD").unwrap_or_else(|_| "admin123".into()),
+            jwt_secret: env::var("JWT_SECRET").unwrap_or_else(|_| "change-me-in-production".into()),
         }
     }
 }

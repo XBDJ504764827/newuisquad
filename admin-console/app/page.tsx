@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import Sidebar from './components/Sidebar';
 import Topbar from './components/Topbar';
+import LoginPage from './components/LoginPage';
 import SummaryPage from './components/pages/SummaryPage';
 import ControlPanelPage from './components/pages/ControlPanelPage';
 import ChatLogsPage from './components/pages/ChatLogsPage';
@@ -58,6 +59,29 @@ export default function Home() {
   const [breadcrumb, setBreadcrumb] = useState(breadcrumbMap['summary']);
   const [collapsed, setCollapsed] = useState(false);
   const [dark, setDark] = useState(true);
+  const [token, setToken] = useState<string | null>(null);
+  const [username, setUsername] = useState<string | null>(null);
+
+  useEffect(() => {
+    const saved = localStorage.getItem('token');
+    if (saved) {
+      setToken(saved);
+      setUsername(localStorage.getItem('username'));
+    }
+  }, []);
+
+  function handleLogin(t: string, u: string, _role: string) {
+    setToken(t);
+    setUsername(u);
+  }
+
+  function handleLogout() {
+    localStorage.removeItem('token');
+    localStorage.removeItem('username');
+    localStorage.removeItem('role');
+    setToken(null);
+    setUsername(null);
+  }
 
   // 首次挂载时从 URL hash 恢复页面（仅客户端），无闪烁
   useEffect(() => {
@@ -86,6 +110,10 @@ export default function Home() {
     document.documentElement.className = nextDark ? 'dark' : 'light';
   }
 
+  if (!token) {
+    return <LoginPage onLogin={handleLogin} />;
+  }
+
   if (!activePage) return null;
 
   const ActivePageComponent = pageComponents[activePage];
@@ -97,6 +125,8 @@ export default function Home() {
         <Topbar
           category={breadcrumb.cat}
           page={breadcrumb.page}
+          username={username}
+          onLogout={handleLogout}
           onToggleSidebar={handleToggleSidebar}
           onToggleTheme={handleToggleTheme}
         />

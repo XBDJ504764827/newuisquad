@@ -91,6 +91,9 @@ export default function ConfigPanelPage() {
   }[]>([]);
   const [abDamageLogsLoading, setAbDamageLogsLoading] = useState(false);
   const [abDamageLogsQuery, setAbDamageLogsQuery] = useState('');
+  const [successMsg, setSuccessMsg] = useState('');
+
+  const showSuccess = (msg: string) => { setSuccessMsg(msg); setTimeout(() => setSuccessMsg(''), 3000); };
 
   useEffect(() => {
     fetch(`${API_BASE}/servers`)
@@ -166,49 +169,49 @@ export default function ConfigPanelPage() {
     });
     const data = await res.json();
     setTkSaving(false);
-    if (data.error) { setTkError(data.error); } else { setTkSettings(data); }
+    if (data.error) { setTkError(data.error); } else { setTkSettings(data); showSuccess('误杀设置已保存'); }
   }, [selectedServerId, tkForm]);
 
   const saveAfkSettings = useCallback(async () => {
     if (!selectedServerId) return; setAfkSaving(true); setAfkError('');
     const res = await fetch(`${API_BASE}/servers/${selectedServerId}/afk-settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(afkForm) });
     const data = await res.json(); setAfkSaving(false);
-    if (data.error) { setAfkError(data.error); }
+    if (data.error) { setAfkError(data.error); } else { showSuccess('挂机设置已保存'); }
   }, [selectedServerId, afkForm]);
 
   const saveBroadcast = useCallback(async () => {
     if (!selectedServerId) return; setBcSaving(true); setBcError('');
     const res = await fetch(`${API_BASE}/servers/${selectedServerId}/broadcast-settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(bcForm) });
     const data = await res.json(); setBcSaving(false);
-    if (data.error) { setBcError(data.error); }
+    if (data.error) { setBcError(data.error); } else { showSuccess('广播设置已保存'); }
   }, [selectedServerId, bcForm]);
 
   const saveTeamSettings = useCallback(async () => {
     if (!selectedServerId) return; setTeamSaving(true); setTeamError('');
     const res = await fetch(`${API_BASE}/servers/${selectedServerId}/team-settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(teamForm) });
     const data = await res.json(); setTeamSaving(false);
-    if (data.error) setTeamError(data.error);
+    if (data.error) setTeamError(data.error); else showSuccess('队伍设置已保存');
   }, [selectedServerId, teamForm]);
 
   const saveSeedSettings = useCallback(async () => {
     if (!selectedServerId) return; setSeedSaving(true); setSeedError('');
     const res = await fetch(`${API_BASE}/servers/${selectedServerId}/seed-settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(seedForm) });
     const data = await res.json(); setSeedSaving(false);
-    if (data.error) setSeedError(data.error);
+    if (data.error) setSeedError(data.error); else showSuccess('暖服设置已保存');
   }, [selectedServerId, seedForm]);
 
   const saveDamageNotifySettings = useCallback(async () => {
     if (!selectedServerId) return; setDamageNotifySaving(true); setDamageNotifyError('');
     const res = await fetch(`${API_BASE}/servers/${selectedServerId}/damage-notify-settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(damageNotifyForm) });
     const data = await res.json(); setDamageNotifySaving(false);
-    if (data.error) setDamageNotifyError(data.error);
+    if (data.error) setDamageNotifyError(data.error); else showSuccess('伤害通知设置已保存');
   }, [selectedServerId, damageNotifyForm]);
 
   const saveAbDamageConfig = useCallback(async () => {
     if (!selectedServerId) return; setAbDamageSaving(true); setAbDamageError('');
     const res = await fetch(`${API_BASE}/servers/${selectedServerId}/abnormal-damage-config`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: abDamageEnabled }) });
     const data = await res.json(); setAbDamageSaving(false);
-    if (data.error) setAbDamageError(data.error);
+    if (data.error) setAbDamageError(data.error); else showSuccess('异常伤害设置已保存');
   }, [selectedServerId, abDamageEnabled]);
 
   const addAbDamageRule = useCallback(async () => {
@@ -219,11 +222,13 @@ export default function ConfigPanelPage() {
     const data = await res.json();
     setAbDamageRules(prev => [...prev, data]);
     setNewAbDamage('');
+    showSuccess('伤害阈值已添加');
   }, [selectedServerId, newAbDamage]);
 
   const delAbDamageRule = useCallback(async (id: number) => {
     await fetch(`${API_BASE}/servers/${selectedServerId}/abnormal-damage-rules/${id}`, { method: 'DELETE' });
     setAbDamageRules(prev => prev.filter(r => r.id !== id));
+    showSuccess('伤害阈值已删除');
   }, [selectedServerId]);
 
   const fetchAbDamageLogs = useCallback(async (playerName?: string) => {
@@ -249,11 +254,13 @@ export default function ConfigPanelPage() {
     const data = await res.json();
     setAnnouncements(prev => [...prev, data]);
     setNewAnn({ content: '', interval_minutes: 10 });
+    showSuccess('通告已添加');
   }, [selectedServerId, newAnn]);
 
   const delAnnouncement = useCallback(async (id: number) => {
     await fetch(`${API_BASE}/servers/${selectedServerId}/announcements/${id}`, { method: 'DELETE' });
     setAnnouncements(prev => prev.filter(a => a.id !== id));
+    showSuccess('通告已删除');
   }, [selectedServerId]);
 
   const addAutoReply = useCallback(async () => {
@@ -262,11 +269,13 @@ export default function ConfigPanelPage() {
     const data = await res.json();
     setAutoReplies(prev => [...prev, data]);
     setNewReply({ keyword: '', reply_message: '' });
+    showSuccess('自动回复规则已添加');
   }, [selectedServerId, newReply]);
 
   const delAutoReply = useCallback(async (id: number) => {
     await fetch(`${API_BASE}/servers/${selectedServerId}/auto-replies/${id}`, { method: 'DELETE' });
     setAutoReplies(prev => prev.filter(r => r.id !== id));
+    showSuccess('自动回复规则已删除');
   }, [selectedServerId]);
 
   return (
@@ -277,6 +286,12 @@ export default function ConfigPanelPage() {
           <select className="rcon-input" style={{ width: 'auto', padding: '6px 10px' }} value={selectedServerId || ''} onChange={e => setSelectedServerId(parseInt(e.target.value))}>
             {servers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
+        </div>
+      )}
+
+      {successMsg && (
+        <div style={{ padding: '8px 16px', background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)', borderRadius: 'var(--radius)', color: '#22c55e', fontSize: 13, fontWeight: 500 }}>
+          {successMsg}
         </div>
       )}
 

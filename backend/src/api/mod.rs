@@ -17,6 +17,7 @@ pub mod abnormal_damage;
 pub mod squad_events;
 pub mod server_control;
 pub mod operation_logs;
+pub mod auth;
 
 use axum::{Router, routing::{get, post, put}};
 use sqlx::PgPool;
@@ -31,6 +32,7 @@ pub struct AppState {
     pub log_broadcast: Option<Arc<broadcast::Sender<LogEntry>>>,
     pub agent_pool: Option<AgentPool>,
     pub steam_api_key: String,
+    pub jwt_secret: String,
 }
 
 pub fn build_router(state: AppState) -> Router {
@@ -63,6 +65,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v1/servers/{id}/server-state", get(server_control::get_server_state))
         .route("/api/v1/servers/{id}/player-action", post(server_control::player_action))
         .route("/api/v1/servers/{id}/disband-squad/{team_id}/{squad_id}", axum::routing::delete(server_control::disband_squad))
+        .route("/api/v1/auth/login", post(auth::login))
+        .route("/api/v1/auth/verify", post(auth::verify_token))
         .route("/api/v1/operation-logs", get(operation_logs::list))
         .route("/api/v1/admins", get(admin_users::list).post(admin_users::create))
         .route("/api/v1/admins/{id}", put(admin_users::update).delete(admin_users::delete))

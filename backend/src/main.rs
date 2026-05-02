@@ -29,11 +29,15 @@ async fn main() -> anyhow::Result<()> {
     let log_rx1 = log_tx.subscribe();
     let log_rx2 = log_tx.subscribe();
 
+    // 初始化默认管理员
+    init_admin(&pool, &config).await?;
+
     let state = api::AppState {
         pool: pool.clone(),
         log_broadcast: Some(Arc::new(log_tx)),
         agent_pool: Some(agent_pool),
         steam_api_key: config.steam_api_key.clone(),
+        jwt_secret: config.jwt_secret.clone(),
     };
 
     // 启动误杀检测服务
@@ -54,5 +58,19 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, router).await?;
 
+    Ok(())
+}
+
+async fn init_admin(pool: &sqlx::PgPool, config: &config::Config) -> anyhow::Result<()> {
+    let exists = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM admin_users WHERE username=$1")
+        .bind(&config.init_admin_username).fetch_one(pool).await?;
+    if exists == 0 {
+        let hash = bcrypt::hash(&config.init_admin_password, 12)?;
+        sqlx::query("INSERT INTO admin_users (username, password_hash, role, permissions) VALUES ($1,$2,$3,$4::jsonb)")
+            .bind(&config.init_admin_username).bind(&hash).bind("超级管理员")
+            .bind(serde_json::json!({"all": true}))
+            .execute(pool).await?;
+        tracing::info!("已创建默认管理员: {}", config.init_admin_username);
+    }
     Ok(())
 }
