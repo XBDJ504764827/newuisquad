@@ -27,6 +27,64 @@ pub enum ParsedEvent {
         is_teamkill: bool,
         logged_at: NaiveDateTime,
     },
+    TeamAssignment {
+        player_name: String,
+        steam64: String,
+        team_id: i32,
+        logged_at: NaiveDateTime,
+    },
+    SquadCreation {
+        player_name: String,
+        steam64: String,
+        squad_id: String,
+        squad_name: String,
+        faction: String,
+        logged_at: NaiveDateTime,
+    },
+    MatchEvent {
+        map_name: String,
+        layer_name: String,
+        team1_faction: String,
+        team2_faction: String,
+        winner_team: Option<i32>,
+        event_type: String,
+        logged_at: NaiveDateTime,
+    },
+    DeployRole {
+        player_name: String,
+        steam64: String,
+        role: String,
+        logged_at: NaiveDateTime,
+    },
+    ReviveEvent {
+        reviver_name: String,
+        reviver_steam64: String,
+        revived_name: String,
+        revived_steam64: String,
+        logged_at: NaiveDateTime,
+    },
+    VehicleEvent {
+        player_name: String,
+        steam64: String,
+        vehicle_name: String,
+        event_type: String,
+        logged_at: NaiveDateTime,
+    },
+    AdminAction {
+        admin_name: String,
+        action_type: String,
+        target: String,
+        message: String,
+        raw_line: String,
+        logged_at: NaiveDateTime,
+    },
+    PlayerDeath {
+        player_name: String,
+        steam64: String,
+        killer_steam64: String,
+        weapon: String,
+        logged_at: NaiveDateTime,
+    },
 }
 
 /// 解析 Squad 日志行的时间戳 [2026.05.01-06.17.03:441]
@@ -306,6 +364,126 @@ pub fn parse_line(line: &str) -> Option<ParsedEvent> {
                 logged_at: ts,
             });
         }
+    }
+
+    // 8. 队伍分配
+    if line.contains("has been added to Team ") {
+        let player_name = line.split("Player").nth(1).and_then(|s| s.split("has been added").next()).map(|s| s.trim().to_string()).unwrap_or_default();
+        let team_str = line.split("has been added to Team ").nth(1).map(|s| s.trim().to_string()).unwrap_or_default();
+        let team_id: i32 = team_str.parse().unwrap_or(0);
+        let (_, steam) = extract_online_ids(line);
+        return Some(ParsedEvent::TeamAssignment { player_name, steam64: steam, team_id, logged_at: ts });
+    }
+
+    // 9. 换图/设下一图
+    if line.contains("ADMIN COMMAND:") && line.contains("Change layer to ") {
+        let rest = line.split("Change layer to ").nth(1).unwrap_or("");
+        let parts: Vec<&str> = rest.split_whitespace().collect();
+        let layer_name = parts.first().map(|s| s.to_string()).unwrap_or_default();
+        let factions: String = parts.iter().skip(1).map(|s| s.to_string()).collect::<Vec<_>>().join(" ");
+        let mut team1 = String::new();
+        let mut team2 = String::new();
+        for part in &parts[1..] {
+            if part.contains('+') {
+                let code = part.split('+').next().unwrap_or("").to_string();
+                if team1.is_empty() { team1 = code; } else { team2 = code; }
+            }
+        }
+        let admin_name = line.split("  ").last().map(|s| s.trim().to_string()).unwrap_or_default();
+        let raw = line.to_string();
+        return Some(ParsedEvent::AdminAction { admin_name, action_type: "change_layer".to_string(), target: layer_name.clone(), message: factions, raw_line: raw, logged_at: ts });
+    }
+
+    // 10. 对局结算
+    if line.contains("has won the match") && line.contains("on layer") {
+        let team_id: Option<i32> = if line.contains("Team 1,") { Some(1) } else if line.contains("Team 2,") { Some(2) } else { None };
+        let layer_name = line.split("on layer ").nth(1).and_then(|s| s.split('(').next()).map(|s| s.trim().to_string()).unwrap_or_default();
+        let map_name = line.split("(level ").nth(1).and_then(|s| s.split(')').next()).map(|s| s.trim().to_string()).unwrap_or_default();
+        let team1_faction = line.split("Team 1, ").nth(1).and_then(|s| s.split('(').next()).map(|s| s.trim().to_string()).unwrap_or_default();
+        let team2_faction = line.split("Team 2, ").nth(1).and_then(|s| s.split('(').next()).map(|s| s.trim().to_string()).unwrap_or_default();
+        if !layer_name.is_empty() {
+            return Some(ParsedEvent::MatchEvent { map_name, layer_name, team1_faction, team2_faction, winner_team: team_id, event_type: "match_end".to_string(), logged_at: ts });
+        }
+    }
+
+    // 11. 小队创建
+    if line.contains("has created Squad ") {
+        let player_name = line.split(" (Online IDs:").next().unwrap_or("").trim().to_string();
+        let player_name = if let Some(pos) = player_name.rfind(". ") { player_name[pos+2..].to_string() } else { player_name };
+        let squad_id = line.split("has created Squad ").nth(1).and_then(|s| s.split_whitespace().next()).map(|s| s.to_string()).unwrap_or_default();
+        let squad_name = line.split("(Squad Name: ").nth(1).and_then(|s| s.split(')').next()).map(|s| s.to_string()).unwrap_or_default();
+        let faction = line.split("on ").last().map(|s| s.trim().to_string()).unwrap_or_default();
+        let (_, steam) = extract_online_ids(line);
+        return Some(ParsedEvent::SquadCreation { player_name, steam64: steam, squad_id, squad_name, faction, logged_at: ts });
+    }
+
+    // 12. 部署/兵种
+    if line.contains("DeployRole=") || (line.contains("OnPossess") && line.contains("Pawn=BP_Soldier")) {
+        let player_name = if let Some(n) = line.find("PC=") {
+            let r = &line[n+3..]; r.split(|c: char| c == ' ' || c == '(').next().unwrap_or("").to_string()
+        } else { String::new() };
+        let (_, steam) = extract_online_ids(line);
+        let role = if let Some(r) = line.find("DeployRole=") {
+            line[r+11..].split_whitespace().next().unwrap_or("").to_string()
+        } else if let Some(r) = line.find("Pawn=BP_Soldier_") {
+            let rest = &line[r+15..]; rest.split(|c: char| c == '_' || c == ' ').next().unwrap_or("").to_string()
+        } else { "Unknown".to_string() };
+        return Some(ParsedEvent::DeployRole { player_name, steam64: steam, role, logged_at: ts });
+    }
+
+    // 13. 救人
+    if line.contains("has revived ") {
+        let reviver = line.split(" has revived ").next().unwrap_or("").trim().to_string();
+        let reviver_name = reviver.split(" (Online IDs:").next().unwrap_or(&reviver).trim().to_string();
+        let (_, reviver_steam) = extract_online_ids(&reviver);
+        let after = line.split("has revived ").nth(1).unwrap_or("");
+        let revived_name = after.split(" (Online IDs:").next().unwrap_or("").trim().to_string();
+        let (_, revived_steam) = extract_online_ids(after);
+        return Some(ParsedEvent::ReviveEvent { reviver_name, reviver_steam64: reviver_steam, revived_name, revived_steam64: revived_steam, logged_at: ts });
+    }
+
+    // 14. 载具
+    if line.contains("Entered Vehicle") || line.contains("Exited Vehicle") {
+        let event_type = if line.contains("Entered") { "enter" } else { "exit" };
+        let player_name = if let Some(p) = line.find("PC=") {
+            line[p+3..].split(|c: char| c == ' ' || c == '(').next().unwrap_or("").to_string()
+        } else { String::new() };
+        let (_, steam) = extract_online_ids(line);
+        let vehicle_name = if let Some(v) = line.find("Asset Name = ") {
+            line[v+13..].split(')').next().unwrap_or("").trim().to_string()
+        } else if let Some(v) = line.find("Pawn=") {
+            let rest = &line[v+5..]; rest.split(|c: char| c == '_' || c == ' ').next().unwrap_or("").to_string()
+        } else { "Unknown".to_string() };
+        return Some(ParsedEvent::VehicleEvent { player_name, steam64: steam, vehicle_name, event_type: event_type.to_string(), logged_at: ts });
+    }
+
+    // 15. 管理员操作审计
+    if line.contains("ADMIN COMMAND:") {
+        let after_admin = line.split("ADMIN COMMAND:").nth(1).unwrap_or("").trim();
+        let (action_type, target) = if after_admin.contains("Remote admin has warned") {
+            ("warn".to_string(), after_admin.split("warned player").nth(1).and_then(|s| s.split('.').next()).map(|s| s.trim().to_string()).unwrap_or_default())
+        } else if after_admin.contains("Change layer to") {
+            ("change_layer".to_string(), String::new())
+        } else if after_admin.contains("broadcasted") {
+            ("broadcast".to_string(), String::new())
+        } else {
+            ("other".to_string(), String::new())
+        };
+        let admin_name = line.split("from RCON").next().and_then(|s| {
+            let parts: Vec<&str> = s.rsplitn(3, ' ').collect();
+            if parts.len() >= 2 { Some(parts[1].to_string()) } else { None }
+        }).unwrap_or_default();
+        let message = after_admin.split("Message was \"").nth(1).and_then(|s| s.split('"').next()).map(|s| s.to_string()).unwrap_or_default();
+        return Some(ParsedEvent::AdminAction { admin_name, action_type, target, message, raw_line: line.to_string(), logged_at: ts });
+    }
+
+    // 16. 玩家死亡
+    if line.contains("Die():") && line.contains("KillingDamage=") {
+        let player_name = line.split("Player: ").nth(1).and_then(|s| s.split("KillingDamage=").next()).map(|s| s.trim().to_string()).unwrap_or_default();
+        let (_, steam) = extract_online_ids(line);
+        let weapon = line.split("caused by ").last().map(|s| s.split('_').next().unwrap_or(s).trim().to_string()).unwrap_or_default();
+        let killer_steam = extract_online_ids(line).1;
+        return Some(ParsedEvent::PlayerDeath { player_name, steam64: steam, killer_steam64: killer_steam, weapon, logged_at: ts });
     }
 
     None

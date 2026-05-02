@@ -11,3 +11,5 @@ pub mod tk_service;
 pub mod broadcast_handler;
 pub mod squad_log_parser;
 pub mod steam_service;
+pub mod rcon_server_info;
+pub mod system_log;

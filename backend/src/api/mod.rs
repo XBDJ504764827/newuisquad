@@ -15,6 +15,8 @@ pub mod seed_settings;
 pub mod damage_notify;
 pub mod abnormal_damage;
 pub mod squad_events;
+pub mod server_control;
+pub mod operation_logs;
 
 use axum::{Router, routing::{get, post, put}};
 use sqlx::PgPool;
@@ -58,6 +60,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v1/servers/{id}/fly-events", get(squad_events::fly_events))
         .route("/api/v1/servers/{id}/kill-events", get(squad_events::kill_events))
         .route("/api/v1/servers/{id}/player-info", get(squad_events::player_info))
+        .route("/api/v1/servers/{id}/server-state", get(server_control::get_server_state))
+        .route("/api/v1/servers/{id}/player-action", post(server_control::player_action))
+        .route("/api/v1/servers/{id}/disband-squad/{team_id}/{squad_id}", axum::routing::delete(server_control::disband_squad))
+        .route("/api/v1/operation-logs", get(operation_logs::list))
         .route("/api/v1/admins", get(admin_users::list).post(admin_users::create))
         .route("/api/v1/admins/{id}", put(admin_users::update).delete(admin_users::delete))
         .route("/agent/connect", get(agent_ws::handler))

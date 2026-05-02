@@ -49,11 +49,30 @@ async fn main() -> anyhow::Result<()> {
                     ).bind(server_id).bind(&player_name).bind(&eos_id).bind(&steam64).bind(&event_type).bind(logged_at).execute(&pool).await;
                     fly_count += 1;
                 }
-                admin_console_backend::services::squad_log_parser::ParsedEvent::KillEvent { attacker_name, attacker_eos, attacker_steam64, victim_name, damage, weapon, is_kill, is_teamkill, logged_at } => {
-                    let _ = sqlx::query(
-                        "INSERT INTO kill_events (server_id, attacker_name, attacker_eos, attacker_steam64, victim_name, damage, weapon, is_kill, is_teamkill, logged_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"
-                    ).bind(server_id).bind(&attacker_name).bind(&attacker_eos).bind(&attacker_steam64).bind(&victim_name).bind(damage).bind(&weapon).bind(is_kill).bind(is_teamkill).bind(logged_at).execute(&pool).await;
-                    kill_count += 1;
+                admin_console_backend::services::squad_log_parser::ParsedEvent::KillEvent { .. } => { kill_count += 1; }
+                admin_console_backend::services::squad_log_parser::ParsedEvent::TeamAssignment { player_name, steam64, team_id, logged_at } => {
+                    let _ = sqlx::query("INSERT INTO team_assignments (server_id, player_name, steam64, team_id, logged_at) VALUES ($1,$2,$3,$4,$5)").bind(server_id).bind(&player_name).bind(&steam64).bind(team_id).bind(logged_at).execute(&pool).await;
+                }
+                admin_console_backend::services::squad_log_parser::ParsedEvent::SquadCreation { player_name, steam64, squad_id, squad_name, faction, logged_at } => {
+                    let _ = sqlx::query("INSERT INTO squad_creations (server_id, player_name, steam64, squad_id, squad_name, faction, logged_at) VALUES ($1,$2,$3,$4,$5,$6,$7)").bind(server_id).bind(&player_name).bind(&steam64).bind(&squad_id).bind(&squad_name).bind(&faction).bind(logged_at).execute(&pool).await;
+                }
+                admin_console_backend::services::squad_log_parser::ParsedEvent::MatchEvent { map_name, layer_name, team1_faction, team2_faction, winner_team, event_type, logged_at } => {
+                    let _ = sqlx::query("INSERT INTO match_info (server_id, map_name, layer_name, team1_faction, team2_faction, winner_team, event_type, logged_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)").bind(server_id).bind(&map_name).bind(&layer_name).bind(&team1_faction).bind(&team2_faction).bind(winner_team).bind(&event_type).bind(logged_at).execute(&pool).await;
+                }
+                admin_console_backend::services::squad_log_parser::ParsedEvent::DeployRole { player_name, steam64, logged_at, .. } => {
+                    let _ = sqlx::query("UPDATE player_info SET player_name=$1 WHERE server_id=$2 AND steam64=$3 AND player_name=''").bind(&player_name).bind(server_id).bind(&steam64).execute(&pool).await;
+                }
+                admin_console_backend::services::squad_log_parser::ParsedEvent::ReviveEvent { reviver_name, reviver_steam64, revived_name, revived_steam64, logged_at } => {
+                    let _ = sqlx::query("INSERT INTO revive_events (server_id, reviver_name, reviver_steam64, revived_name, revived_steam64, logged_at) VALUES ($1,$2,$3,$4,$5,$6)").bind(server_id).bind(&reviver_name).bind(&reviver_steam64).bind(&revived_name).bind(&revived_steam64).bind(logged_at).execute(&pool).await;
+                }
+                admin_console_backend::services::squad_log_parser::ParsedEvent::VehicleEvent { player_name, steam64, vehicle_name, event_type, logged_at } => {
+                    let _ = sqlx::query("INSERT INTO vehicle_events (server_id, player_name, steam64, vehicle_name, event_type, logged_at) VALUES ($1,$2,$3,$4,$5,$6)").bind(server_id).bind(&player_name).bind(&steam64).bind(&vehicle_name).bind(&event_type).bind(logged_at).execute(&pool).await;
+                }
+                admin_console_backend::services::squad_log_parser::ParsedEvent::AdminAction { admin_name, action_type, target, message, raw_line, logged_at } => {
+                    let _ = sqlx::query("INSERT INTO admin_actions (server_id, admin_name, action_type, target, message, raw_line, logged_at) VALUES ($1,$2,$3,$4,$5,$6,$7)").bind(server_id).bind(&admin_name).bind(&action_type).bind(&target).bind(&message).bind(&raw_line).bind(logged_at).execute(&pool).await;
+                }
+                admin_console_backend::services::squad_log_parser::ParsedEvent::PlayerDeath { player_name, steam64, killer_steam64, weapon, logged_at } => {
+                    let _ = sqlx::query("INSERT INTO kill_events (server_id, attacker_name, attacker_steam64, victim_name, damage, weapon, is_kill, is_teamkill, logged_at) VALUES ($1,'',$2,$3,0,$4,true,false,$5)").bind(server_id).bind(&killer_steam64).bind(&player_name).bind(&weapon).bind(logged_at).execute(&pool).await;
                 }
             }
         }

@@ -40,6 +40,10 @@ export default function ControlPanelPage() {
   const [deleting, setDeleting] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Server | null>(null);
   const [deleteError, setDeleteError] = useState('');
+  const [serverState, setServerState] = useState<any>(null);
+  const [serverStateLoading, setServerStateLoading] = useState(false);
+  const [actionMsg, setActionMsg] = useState('');
+  const [selectedTeam, setSelectedTeam] = useState(1);
 
   useEffect(() => {
     fetch(`${API_BASE}/servers`)
@@ -101,6 +105,41 @@ export default function ControlPanelPage() {
       setSelectedServer(data);
     }
   }, [form]);
+
+  const fetchServerState = useCallback(async () => {
+    if (!selectedServer) return;
+    setServerStateLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/servers/${selectedServer.id}/server-state`);
+      const data = await res.json();
+      if (!data.error) setServerState(data);
+    } catch {}
+    setServerStateLoading(false);
+  }, [selectedServer]);
+
+  const execPlayerAction = useCallback(async (playerName: string, action: string, msg?: string) => {
+    if (!selectedServer) return;
+    try {
+      const res = await fetch(`${API_BASE}/servers/${selectedServer.id}/player-action`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ player_name: playerName, action, message: msg || '', admin_user: 'Admin' }),
+      });
+      const data = await res.json();
+      setActionMsg(data.error ? `操作失败: ${data.error}` : `${action} ${playerName} 执行成功`);
+      setTimeout(() => setActionMsg(''), 3000);
+      fetchServerState();
+    } catch { setActionMsg('操作请求失败'); }
+  }, [selectedServer, fetchServerState]);
+
+  const execDisbandSquad = useCallback(async (teamId: number, squadId: string) => {
+    if (!selectedServer) return;
+    try {
+      await fetch(`${API_BASE}/servers/${selectedServer.id}/disband-squad/${teamId}/${squadId}`, { method: 'DELETE' });
+      setActionMsg('小队已解散');
+      setTimeout(() => setActionMsg(''), 3000);
+      fetchServerState();
+    } catch { setActionMsg('解散失败'); }
+  }, [selectedServer, fetchServerState]);
 
   const handleDeleteClick = useCallback((server: Server) => {
     setDeleteTarget(server);
@@ -237,6 +276,113 @@ export default function ControlPanelPage() {
             </div>
           )}
         </div>
+
+        {selectedServer && (
+          <div className="card">
+            <div className="card-header">
+              <div>
+                <div className="card-title">服务器实时控制</div>
+                <div className="card-sub">{serverState ? `${serverState.map_name} - ${serverState.game_mode}` : '点击刷新获取服务器状态'}</div>
+              </div>
+              <button className="rcon-btn" style={{ padding: '6px 14px', fontSize: 12, width: 'auto' }} onClick={fetchServerState} disabled={serverStateLoading}>
+                {serverStateLoading ? '查询中...' : '刷新状态'}
+              </button>
+            </div>
+            {actionMsg && (
+              <div style={{ padding: '6px 14px', fontSize: 12, background: actionMsg.includes('失败') ? 'rgba(239,68,68,0.1)' : 'rgba(34,197,94,0.1)', color: actionMsg.includes('失败') ? 'var(--red)' : '#22c55e' }}>{actionMsg}</div>
+            )}
+            {serverState && (
+              <div className="card-body" style={{ padding: 0 }}>
+                <div style={{ display: 'flex', borderBottom: '1px solid var(--border)' }}>
+                  {[1, 2].map(teamId => {
+                    const teamPlayers = serverState.players.filter((p: any) => p.team_id === teamId);
+                    const teamSquads = serverState.squads.filter((s: any) => s.team_id === teamId);
+                    const squadPlayers = (sid: string | null) => teamPlayers.filter((p: any) => p.squad_id === sid);
+                    const unsquadded = teamPlayers.filter((p: any) => !p.squad_id);
+                    const teamName = teamId === 1 ? '美军 (US Army)' : '俄军 (RUS)';
+                    return (
+                      <div key={teamId} onClick={() => setSelectedTeam(teamId)}
+                        style={{ flex: 1, padding: '8px 14px', cursor: 'pointer', textAlign: 'center', fontSize: 13, fontWeight: 500, borderBottom: selectedTeam === teamId ? '2px solid var(--text)' : '2px solid transparent', color: selectedTeam === teamId ? 'var(--text)' : 'var(--text3)' }}>
+                        {teamName} ({teamPlayers.length}人)
+                      </div>
+                    );
+                  })}
+                </div>
+                {[selectedTeam].map(teamId => {
+                  const teamPlayers = serverState.players.filter((p: any) => p.team_id === teamId);
+                  const teamSquads = serverState.squads.filter((s: any) => s.team_id === teamId);
+                  const squadPlayers = (sid: string | null) => teamPlayers.filter((p: any) => p.squad_id === sid);
+                  const unsquadded = teamPlayers.filter((p: any) => !p.squad_id);
+
+                  const renderPlayerRow = (p: any) => (
+                    <tr key={p.name + (p.steam_id || '')} style={{ borderBottom: '1px solid var(--border)', fontSize: 12 }}>
+                      <td style={{ padding: '4px 6px', fontWeight: 500 }}>{p.name}</td>
+                      <td style={{ padding: '4px 6px', fontSize: 11, color: 'var(--text2)' }}>{p.role}</td>
+                      <td style={{ padding: '4px 6px', textAlign: 'center' }}>{p.kills}</td>
+                      <td style={{ padding: '4px 6px', textAlign: 'center' }}>{p.deaths}</td>
+                      <td style={{ padding: '4px 6px' }}>
+                        <div style={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+                          <span className="badge gray" style={{ cursor: 'pointer', fontSize: 9 }} onClick={() => execPlayerAction(p.name, 'warn')}>警告</span>
+                          <span className="badge red" style={{ cursor: 'pointer', fontSize: 9 }} onClick={() => { if (confirm(`踢出 ${p.name}?`)) execPlayerAction(p.name, 'kick', '管理员操作'); }}>踢出</span>
+                          <span className="badge red" style={{ cursor: 'pointer', fontSize: 9 }} onClick={() => { if (confirm(`封禁 ${p.name}?`)) execPlayerAction(p.name, 'ban', '管理员操作'); }}>封禁</span>
+                          <span className="badge blue" style={{ cursor: 'pointer', fontSize: 9 }} onClick={() => execPlayerAction(p.name, 'team_change')}>跳边</span>
+                          {p.squad_id && <span className="badge gray" style={{ cursor: 'pointer', fontSize: 9 }} onClick={() => execPlayerAction(p.name, 'squad_remove')}>踢出小队</span>}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+
+                  return (
+                    <div key={teamId} style={{ maxHeight: 500, overflowY: 'auto' }}>
+                      {teamSquads.map((sq: any) => (
+                        <div key={sq.name} style={{ borderBottom: '1px solid var(--border)' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 14px', background: 'var(--bg3)' }}>
+                            <span style={{ fontWeight: 600, fontSize: 13 }}>{sq.name}</span>
+                            <span style={{ fontSize: 11, color: 'var(--text3)' }}>队长: {sq.creator || '-'} ({squadPlayers(sq.name).length}人)</span>
+                            <div style={{ display: 'flex', gap: 4 }}>
+                              <span className="badge red" style={{ cursor: 'pointer', fontSize: 9 }} onClick={() => { if (confirm(`解散小队 ${sq.name}?`)) execDisbandSquad(teamId, sq.name); }}>解散</span>
+                            </div>
+                          </div>
+                          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                            <thead>
+                              <tr style={{ borderBottom: '1px solid var(--border)', textAlign: 'left' }}>
+                                <th style={{ padding: '4px 6px', fontWeight: 500, fontSize: 11, color: 'var(--text3)' }}>玩家</th>
+                                <th style={{ padding: '4px 6px', fontWeight: 500, fontSize: 11, color: 'var(--text3)' }}>职业</th>
+                                <th style={{ padding: '4px 6px', fontWeight: 500, fontSize: 11, color: 'var(--text3)', textAlign: 'center' }}>击杀</th>
+                                <th style={{ padding: '4px 6px', fontWeight: 500, fontSize: 11, color: 'var(--text3)', textAlign: 'center' }}>死亡</th>
+                                <th style={{ padding: '4px 6px', fontWeight: 500, fontSize: 11, color: 'var(--text3)' }}>操作</th>
+                              </tr>
+                            </thead>
+                            <tbody>{squadPlayers(sq.name).map(renderPlayerRow)}</tbody>
+                          </table>
+                        </div>
+                      ))}
+                      {unsquadded.length > 0 && (
+                        <div style={{ borderBottom: '1px solid var(--border)' }}>
+                          <div style={{ padding: '6px 14px', background: 'var(--bg3)', fontWeight: 600, fontSize: 13, color: 'var(--text3)' }}>
+                            未加入小队 ({unsquadded.length}人)
+                          </div>
+                          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                            <thead>
+                              <tr style={{ borderBottom: '1px solid var(--border)', textAlign: 'left' }}>
+                                <th style={{ padding: '4px 6px', fontWeight: 500, fontSize: 11, color: 'var(--text3)' }}>玩家</th>
+                                <th style={{ padding: '4px 6px', fontWeight: 500, fontSize: 11, color: 'var(--text3)' }}>职业</th>
+                                <th style={{ padding: '4px 6px', fontWeight: 500, fontSize: 11, color: 'var(--text3)', textAlign: 'center' }}>击杀</th>
+                                <th style={{ padding: '4px 6px', fontWeight: 500, fontSize: 11, color: 'var(--text3)', textAlign: 'center' }}>死亡</th>
+                                <th style={{ padding: '4px 6px', fontWeight: 500, fontSize: 11, color: 'var(--text3)' }}>操作</th>
+                              </tr>
+                            </thead>
+                            <tbody>{unsquadded.map(renderPlayerRow)}</tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="card" style={{ height: '100%', minHeight: 500 }}>
           <div className="card-header">
