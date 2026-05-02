@@ -65,8 +65,8 @@ export default function PlayerInfoPage() {
                 <td style={{ padding: '8px 14px', fontFamily: 'monospace', fontSize: 12, color: 'var(--text2)' }}>{p.steam64 || '-'}</td>
                 <td style={{ padding: '8px 14px', fontFamily: 'monospace', fontSize: 11, color: 'var(--text2)' }} title={p.eos_id}>{(p.eos_id || '').slice(0, 16)}...</td>
                 <td style={{ padding: '8px 14px', fontFamily: 'monospace', fontSize: 12 }}>{p.ip || '-'}</td>
-                <td style={{ padding: '8px 14px', whiteSpace: 'nowrap', fontSize: 12 }}>{new Date(p.first_seen + 'Z').toLocaleString()}</td>
-                <td style={{ padding: '8px 14px', whiteSpace: 'nowrap', fontSize: 12 }}>{new Date(p.last_seen + 'Z').toLocaleString()}</td>
+                <td style={{ padding: '8px 14px', whiteSpace: 'nowrap', fontSize: 12 }}>{new Date(p.first_seen).toLocaleString()}</td>
+                <td style={{ padding: '8px 14px', whiteSpace: 'nowrap', fontSize: 12 }}>{new Date(p.last_seen).toLocaleString()}</td>
               </tr>
             ))}</tbody>
           </table>}

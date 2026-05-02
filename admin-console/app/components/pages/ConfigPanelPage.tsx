@@ -663,7 +663,7 @@ export default function ConfigPanelPage() {
                           {abDamageLogs.map(log => (
                             <tr key={log.id} style={{ borderBottom: '1px solid var(--border)' }}>
                               <td style={{ padding: '6px', whiteSpace: 'nowrap', fontSize: 11 }}>
-                                {new Date(log.logged_at + 'Z').toLocaleString()}
+                                {new Date(log.logged_at).toLocaleString()}
                               </td>
                               <td style={{ padding: '6px', fontWeight: 500 }}>{log.player_name}</td>
                               <td style={{ padding: '6px', fontFamily: 'monospace', fontSize: 11, color: 'var(--text2)' }}>{log.player_steamid64}</td>

@@ -52,7 +52,7 @@ export default function KillLogsPage() {
             </tr></thead>
             <tbody>{events.map(e => (
               <tr key={e.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                <td style={{ padding: '8px 14px', whiteSpace: 'nowrap', fontSize: 12 }}>{new Date(e.logged_at + 'Z').toLocaleString()}</td>
+                <td style={{ padding: '8px 14px', whiteSpace: 'nowrap', fontSize: 12 }}>{new Date(e.logged_at).toLocaleString()}</td>
                 <td style={{ padding: '8px 14px', fontWeight: 500 }}>{e.attacker_name || '-'}</td>
                 <td style={{ padding: '8px 14px', fontFamily: 'monospace', fontSize: 12, color: 'var(--text2)' }}>{e.attacker_steam64 || '-'}</td>
                 <td style={{ padding: '8px 14px' }}><span className="badge blue" style={{ fontSize: 10 }}>{e.weapon}</span></td>

@@ -54,7 +54,7 @@ export default function FlyLogsPage() {
             </tr></thead>
             <tbody>{events.map(e => (
               <tr key={e.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                <td style={{ padding: '8px 14px', whiteSpace: 'nowrap', fontSize: 12 }}>{new Date(e.logged_at + 'Z').toLocaleString()}</td>
+                <td style={{ padding: '8px 14px', whiteSpace: 'nowrap', fontSize: 12 }}>{new Date(e.logged_at).toLocaleString()}</td>
                 <td style={{ padding: '8px 14px', fontWeight: 500 }}>{e.player_name || '-'}</td>
                 <td style={{ padding: '8px 14px', fontFamily: 'monospace', fontSize: 12, color: 'var(--text2)' }}>{e.steam64 || '-'}</td>
                 <td style={{ padding: '8px 14px', fontFamily: 'monospace', fontSize: 11, color: 'var(--text2)' }}>{e.eos_id || '-'}</td>

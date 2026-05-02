@@ -70,7 +70,7 @@ export default function ActionLogsPage() {
             <tbody>{logs.map((l: any, i: number) => (
               <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
                 <td style={{ padding: '6px 14px', whiteSpace: 'nowrap', fontSize: 12 }}>
-                  {new Date(l.logged_at + (l.logged_at?.endsWith('Z') ? '' : 'Z')).toLocaleString()}
+                  {new Date(l.logged_at).toLocaleString()}
                 </td>
                 <td style={{ padding: '6px 14px' }}>
                   <span className={l.log_type === 'agent' ? 'badge blue' : l.log_type === 'action' ? 'badge green' : 'badge gray'} style={{ fontSize: 10 }}>
