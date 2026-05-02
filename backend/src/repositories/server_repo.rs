@@ -30,3 +30,23 @@ pub async fn update_server(pool: &PgPool, id: i32, req: &UpdateServerRequest) ->
     .fetch_optional(pool)
     .await
 }
+
+pub async fn delete_server(pool: &PgPool, id: i32) -> Result<bool, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("DELETE FROM rcon_logs WHERE server_id = $1").bind(id).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM server_logs WHERE server_id = $1").bind(id).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM file_ops WHERE server_id = $1").bind(id).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM tk_settings WHERE server_id = $1").bind(id).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM afk_settings WHERE server_id = $1").bind(id).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM broadcast_settings WHERE server_id = $1").bind(id).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM announcements WHERE server_id = $1").bind(id).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM auto_replies WHERE server_id = $1").bind(id).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM team_settings WHERE server_id = $1").bind(id).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM seed_settings WHERE server_id = $1").bind(id).execute(&mut *tx).await?;
+    let result = sqlx::query("DELETE FROM servers WHERE id = $1")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(result.rows_affected() > 0)
+}

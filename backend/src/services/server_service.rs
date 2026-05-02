@@ -13,3 +13,7 @@ pub async fn get(pool: &PgPool, id: i32) -> Result<Option<Server>, sqlx::Error> 
 pub async fn update(pool: &PgPool, id: i32, req: UpdateServerRequest) -> Result<Option<Server>, sqlx::Error> {
     server_repo::update_server(pool, id, &req).await
 }
+
+pub async fn delete(pool: &PgPool, id: i32) -> Result<bool, sqlx::Error> {
+    server_repo::delete_server(pool, id).await
+}

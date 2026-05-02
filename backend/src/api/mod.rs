@@ -30,7 +30,7 @@ pub struct AppState {
 pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/api/v1/servers", get(server_info::list).post(servers::create))
-        .route("/api/v1/servers/{id}", get(server_info::get_one).put(server_info::update))
+        .route("/api/v1/servers/{id}", get(server_info::get_one).put(server_info::update).delete(server_info::delete))
         .route("/api/v1/servers/{id}/rcon", post(rcon::execute))
         .route("/api/v1/servers/{id}/rcon-logs", get(rcon::list_logs))
         .route("/api/v1/servers/{id}/logs", get(logs::list))

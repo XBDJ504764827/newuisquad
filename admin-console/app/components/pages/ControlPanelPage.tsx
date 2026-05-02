@@ -37,6 +37,9 @@ export default function ControlPanelPage() {
   const [submitting, setSubmitting] = useState(false);
   const [newToken, setNewToken] = useState('');
   const [error, setError] = useState('');
+  const [deleting, setDeleting] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Server | null>(null);
+  const [deleteError, setDeleteError] = useState('');
 
   useEffect(() => {
     fetch(`${API_BASE}/servers`)
@@ -84,7 +87,7 @@ export default function ControlPanelPage() {
     const res = await fetch(`${API_BASE}/servers`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form),
+      body: JSON.stringify({ ...form, rcon_port: form.rcon_port || 28016 }),
     });
     const data = await res.json();
     setSubmitting(false);
@@ -96,6 +99,37 @@ export default function ControlPanelPage() {
       setSelectedServer(data);
     }
   }, [form]);
+
+  const handleDeleteClick = useCallback((server: Server) => {
+    setDeleteTarget(server);
+    setDeleteError('');
+  }, []);
+
+  const handleConfirmDelete = useCallback(async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    setDeleteError('');
+    try {
+      const res = await fetch(`${API_BASE}/servers/${deleteTarget.id}`, { method: 'DELETE' });
+      if (res.ok) {
+        setServers(prev => {
+          const remaining = prev.filter(s => s.id !== deleteTarget.id);
+          if (selectedServer?.id === deleteTarget.id) {
+            setSelectedServer(remaining[0] || null);
+          }
+          return remaining;
+        });
+        setDeleteTarget(null);
+      } else {
+        const data = await res.json();
+        setDeleteError(data.error || '删除失败');
+      }
+    } catch {
+      setDeleteError('删除请求失败，请检查网络连接');
+    } finally {
+      setDeleting(false);
+    }
+  }, [deleteTarget, selectedServer]);
 
   if (loading) return (
     <div className="page-view" style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -113,7 +147,7 @@ export default function ControlPanelPage() {
             </svg>
             <h3>暂无服务器</h3>
             <p style={{ marginTop: 8 }}>点击下方按钮添加您的第一台游戏服务器。</p>
-            <button className="rcon-btn" style={{ marginTop: 20, width: 'auto', padding: '10px 24px' }} onClick={() => setShowAddModal(true)}>
+            <button className="rcon-btn" style={{ marginTop: 20, width: 'auto', padding: '10px 24px' }} onClick={() => { setShowAddModal(true); setNewToken(''); setError(''); }}>
               添加服务器
             </button>
           </div>
@@ -165,6 +199,24 @@ export default function ControlPanelPage() {
                     <span className="badge green">已连接</span>
                   </div>
                 </div>
+                <button
+                  onClick={() => handleDeleteClick(selectedServer)}
+                  disabled={deleting}
+                  style={{
+                    width: '100%',
+                    padding: '8px 0',
+                    marginTop: 8,
+                    background: 'transparent',
+                    border: '1px solid var(--red)',
+                    borderRadius: 'var(--radius)',
+                    color: 'var(--red)',
+                    cursor: 'pointer',
+                    fontSize: 13,
+                    opacity: deleting ? 0.5 : 1,
+                  }}
+                >
+                  {deleting ? '删除中...' : '删除服务器'}
+                </button>
               </div>
             </div>
           )}
@@ -208,6 +260,45 @@ export default function ControlPanelPage() {
         </div>
       </div>
 
+      {deleteTarget && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1001 }}
+          onClick={e => { if (e.target === e.currentTarget) setDeleteTarget(null); }}>
+          <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: 24, width: 420, maxWidth: '90vw' }}
+            onClick={e => e.stopPropagation()}>
+            <h3 style={{ marginBottom: 12, fontSize: 16, color: 'var(--red)' }}>删除服务器</h3>
+            <p style={{ color: 'var(--text2)', fontSize: 13, lineHeight: 1.6, marginBottom: 20 }}>
+              确定要删除服务器 <strong style={{ color: 'var(--text)' }}>{deleteTarget.name}</strong> ({deleteTarget.server_id}) 吗？此操作不可撤销，服务器相关的日志数据也会一并清除。
+            </p>
+            {deleteError && (
+              <div className="terminal" style={{ padding: 10, marginBottom: 16, fontSize: 12, color: 'var(--red)' }}>{deleteError}</div>
+            )}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button className="rcon-btn" style={{ background: 'var(--bg3)', color: 'var(--text2)' }}
+                onClick={() => setDeleteTarget(null)} disabled={deleting}>
+                取消
+              </button>
+              <button
+                onClick={handleConfirmDelete}
+                disabled={deleting}
+                style={{
+                  padding: '8px 20px',
+                  background: 'var(--red)',
+                  border: 'none',
+                  borderRadius: 'var(--radius)',
+                  color: '#fff',
+                  cursor: 'pointer',
+                  fontSize: 13,
+                  fontWeight: 500,
+                  opacity: deleting ? 0.5 : 1,
+                }}
+              >
+                {deleting ? '删除中...' : '确认删除'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showAddModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
           onClick={e => { if (e.target === e.currentTarget) setShowAddModal(false); }}>
@@ -231,7 +322,7 @@ export default function ControlPanelPage() {
                 <label style={{ fontSize: 12, color: 'var(--text2)' }}>服务器 IP</label>
                 <input className="rcon-input" value={form.ip} onChange={e => setForm({...form, ip: e.target.value})} placeholder="121.40.123.45" />
                 <label style={{ fontSize: 12, color: 'var(--text2)' }}>RCON 端口</label>
-                <input className="rcon-input" type="number" value={form.rcon_port} onChange={e => setForm({...form, rcon_port: parseInt(e.target.value) || 28016})} />
+                <input className="rcon-input" type="number" value={form.rcon_port || ''} onChange={e => { const v = e.target.value; setForm({...form, rcon_port: v === '' ? 0 : parseInt(v) || 0}); }} />
                 <label style={{ fontSize: 12, color: 'var(--text2)' }}>RCON 密码</label>
                 <input className="rcon-input" type="password" value={form.rcon_password} onChange={e => setForm({...form, rcon_password: e.target.value})} placeholder="••••••" />
                 {error && <div style={{ color: 'var(--red)', fontSize: 12 }}>{error}</div>}
