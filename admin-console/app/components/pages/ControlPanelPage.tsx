@@ -11,12 +11,34 @@ interface WarnEntry { player_name: string; steam_id: string; reason: string; adm
 interface ServerInfo { server_name: string; player_count: number; max_players: number; map_name: string; game_mode: string; next_map: string; next_layer: string; }
 
 const QUICK_COMMANDS = [
-    { label: '列出玩家', cmd: 'ListPlayers' },
-    { label: '列出小队', cmd: 'ListSquads' },
-    { label: '下张地图', cmd: 'ShowNextMap' },
-    { label: '服务器信息', cmd: 'ShowServerInfo' },
-    { label: '换图确认', cmd: 'AdminSlomo 1' },
+    { label: '列出玩家', cmd: 'ListPlayers', icon: '👥' },
+    { label: '列出小队', cmd: 'ListSquads', icon: '🛡️' },
+    { label: '下张地图', cmd: 'ShowNextMap', icon: '🗺️' },
+    { label: '服务器信息', cmd: 'ShowServerInfo', icon: '📊' },
+    { label: '换图确认', cmd: 'AdminSlomo 1', icon: '⏱️' },
 ];
+
+const CHANNEL_COLORS: Record<string, string> = {
+    All: '#a78bfa', Team: '#3b82f6', Squad: '#22c55e', Admin: '#f59e0b',
+};
+
+const LOG_LEVEL_COLORS: Record<string, string> = {
+    ERROR: '#ef4444', WARN: '#f59e0b', INFO: '#3b82f6', SUCCESS: '#22c55e', DEBUG: '#71717a',
+};
+
+function factionFlag(f: string) {
+    if (/pla|people.*liberation/i.test(f)) return '🇨🇳';
+    if (/us\s*army|united\s*states/i.test(f)) return '🇺🇸';
+    if (/british|baf/i.test(f)) return '🇬🇧';
+    if (/canadian/i.test(f)) return '🇨🇦';
+    if (/australian/i.test(f)) return '🇦🇺';
+    if (/russian|rgf|vdv/i.test(f)) return '🇷🇺';
+    if (/insurgent|irregular/i.test(f)) return '🏴';
+    if (/turkish/i.test(f)) return '🇹🇷';
+    if (/middle\s*eastern|mea/i.test(f)) return '🇸🇦';
+    if (/marine/i.test(f)) return '🌎';
+    return '🎖️';
+}
 
 export default function ControlPanelPage() {
     const { servers } = useServers();
@@ -24,7 +46,7 @@ export default function ControlPanelPage() {
     const [showAddModal, setShowAddModal] = useState(false);
     const [logs, setLogs] = useState<LogEntry[]>([]);
     const [chatMsgs, setChatMsgs] = useState<ChatMsg[]>([]);
-    const [notifications, setNotifications] = useState<Array<{id: number; text: string; type: string}>>([]);
+    const [notifications, setNotifications] = useState<Array<{ id: number; text: string; type: string }>>([]);
     const [rconCommand, setRconCommand] = useState('');
     const [rconResult, setRconResult] = useState('');
     const [loading, setLoading] = useState(true);
@@ -57,7 +79,6 @@ export default function ControlPanelPage() {
         setLoading(false);
     }, [servers, selectedServer]);
 
-    // WebSocket 实时日志 + 聊天解析
     useEffect(() => {
         if (!selectedServer) return;
         if (wsRef.current) wsRef.current.close();
@@ -69,8 +90,6 @@ export default function ControlPanelPage() {
                 const entry = JSON.parse(e.data);
                 if (!entry.message || !entry.log_level) return;
                 setLogs(prev => [...prev.slice(-300), entry]);
-
-                // 解析聊天消息
                 const cat = entry.category || '';
                 if (cat.startsWith('Chat-')) {
                     const channel = cat.replace('Chat-', '');
@@ -79,8 +98,6 @@ export default function ControlPanelPage() {
                     const msg = colon > 0 ? entry.message.slice(colon + 2) : entry.message;
                     setChatMsgs(prev => [...prev.slice(-200), { time: new Date(entry.logged_at), player, message: msg, channel }]);
                 }
-
-                // 玩家进出通知
                 if (cat === 'PlayerJoin') {
                     const id = ++notifId.current;
                     setNotifications(prev => [...prev.slice(-5), { id, text: entry.message, type: 'join' }]);
@@ -107,11 +124,7 @@ export default function ControlPanelPage() {
         setServerStateLoading(true);
         try {
             const res = await api(`/servers/${selectedServer.id}/server-state`);
-            console.log('[fetchServerState] HTTP状态:', res.status);
-            const text = await res.text();
-            console.log('[fetchServerState] 原始响应:', text.substring(0, 500));
-            const data = JSON.parse(text);
-            console.log('[fetchServerState] 解析结果:', { hasError: !!data.error, players: data.players?.length, squads: data.squads?.length, teams: data.teams });
+            const data = await res.json();
             if (!data.error) {
                 setServerState(data);
                 setServerInfo(prev => ({
@@ -124,29 +137,18 @@ export default function ControlPanelPage() {
                     next_map: data.next_map || prev?.next_map || '',
                     next_layer: '',
                 }));
-            } else {
-                console.warn('[fetchServerState] 服务端错误:', data.error);
             }
-        } catch (e) { console.error('[fetchServerState] 请求失败', e); }
+        } catch { }
         setServerStateLoading(false);
     }, [selectedServer]);
-
-    // 调试：监控 serverState 变化
-    useEffect(() => {
-        console.log('[ControlPanel] serverState 更新:', {
-            hasState: !!serverState,
-            players: (serverState as any)?.players?.length,
-            squads: (serverState as any)?.squads?.length,
-            teams: (serverState as any)?.teams,
-            selectedServer: selectedServer?.id,
-        });
-    }, [serverState, selectedServer]);
 
     const fetchBansWarns = useCallback(async () => {
         if (!selectedServer) return;
         try {
             const [bRes, wRes, iRes] = await Promise.all([
-                api(`/servers/${selectedServer.id}/bans`).then(r => r.json()), api(`/servers/${selectedServer.id}/warns`).then(r => r.json()), api(`/servers/${selectedServer.id}/server-info`).then(r => r.json()),
+                api(`/servers/${selectedServer.id}/bans`).then(r => r.json()),
+                api(`/servers/${selectedServer.id}/warns`).then(r => r.json()),
+                api(`/servers/${selectedServer.id}/server-info`).then(r => r.json()),
             ]);
             setBans(bRes.data || []); setWarns(wRes.data || []);
             if (!iRes.error) {
@@ -164,13 +166,11 @@ export default function ControlPanelPage() {
         } catch { }
     }, [selectedServer]);
 
-    // 切换服务器时立即加载
     useEffect(() => {
         if (!selectedServer) return;
         fetchServerState(); fetchBansWarns();
-    }, [selectedServer?.id]); // eslint-disable-line
+    }, [selectedServer?.id]);
 
-    // 定时轮询
     useEffect(() => {
         if (!autoRefresh || !selectedServer) return;
         const timer = setInterval(() => { fetchServerState(); fetchBansWarns(); }, 3000);
@@ -226,68 +226,142 @@ export default function ControlPanelPage() {
         setDeleting(false);
     }, [deleteTarget, selectedServer]);
 
-    if (loading) return <div className="page-view"><div className="card"><div className="card-body" style={{ textAlign: 'center', color: 'var(--text3)', padding: 40 }}>加载中...</div></div></div>;
-    if (servers.length === 0 && !showAddModal) return <div className="page-view"><div className="card"><div className="empty-state"><h3>暂无服务器</h3><button className="rcon-btn" style={{ marginTop: 20 }} onClick={() => { setShowAddModal(true); setNewToken(''); setError(''); }}>添加服务器</button></div></div></div>;
+    const playerPct = serverInfo ? Math.round((serverInfo.player_count / Math.max(1, serverInfo.max_players)) * 100) : 0;
+
+    if (loading) return <div className="page-view"><div className="card"><div className="card-body" style={{ textAlign: 'center', color: 'var(--text3)', padding: 48 }}>加载中...</div></div></div>;
+    if (servers.length === 0 && !showAddModal) return <div className="page-view"><div className="card"><div className="empty-state"><h3 style={{ fontSize: 18, marginBottom: 8 }}>暂无服务器</h3><p style={{ color: 'var(--text3)', marginBottom: 20 }}>添加游戏服务器以开始管理</p><button className="rcon-btn" style={{ width: 'auto', paddingLeft: 24, paddingRight: 24 }} onClick={() => { setShowAddModal(true); setNewToken(''); setError(''); }}>+ 添加服务器</button></div></div></div>;
 
     return (
-        <div className="page-view" style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-            {/* 顶部栏 */}
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'space-between' }}>
-                <div style={{ display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap' }}>
+        <div className="page-view" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {/* ═══ 顶栏：服务器选择 + 信息条 ═══ */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
                     {servers.map((s: any) => (
-                        <button key={s.id} className={`tab-btn ${selectedServer?.id === s.id ? 'active' : ''}`} style={{ borderBottom: selectedServer?.id === s.id ? '2px solid var(--text)' : '2px solid transparent' }} onClick={() => setSelectedServer(s)}>{s.name}</button>
+                        <button
+                            key={s.id}
+                            onClick={() => setSelectedServer(s)}
+                            style={{
+                                padding: '6px 14px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 500,
+                                background: selectedServer?.id === s.id ? 'var(--text)' : 'var(--bg3)',
+                                color: selectedServer?.id === s.id ? 'var(--bg)' : 'var(--text2)',
+                                transition: 'all .15s',
+                            }}
+                        >{s.name}</button>
                     ))}
-                    <button className="icon-btn" onClick={() => { setShowAddModal(true); setNewToken(''); setError(''); }}>+</button>
+                    <button
+                        onClick={() => { setShowAddModal(true); setNewToken(''); setError(''); }}
+                        style={{ width: 28, height: 28, borderRadius: 6, border: '1px dashed var(--border2)', background: 'transparent', color: 'var(--text3)', cursor: 'pointer', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all .15s' }}
+                        title="添加服务器"
+                    >+</button>
                 </div>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                    <label style={{ fontSize: 11, color: 'var(--text3)', display: 'flex', gap: 4, cursor: 'pointer' }}>
-                        <input type="checkbox" checked={autoRefresh} onChange={e => setAutoRefresh(e.target.checked)} />自动刷新
+                <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                    <label style={{ fontSize: 11, color: 'var(--text3)', display: 'flex', gap: 5, alignItems: 'center', cursor: 'pointer', userSelect: 'none' }}>
+                        <div style={{ width: 32, height: 18, borderRadius: 9, background: autoRefresh ? '#22c55e' : 'var(--border2)', position: 'relative', transition: 'background .2s' }}>
+                            <div style={{ position: 'absolute', top: 2, left: autoRefresh ? 16 : 2, width: 14, height: 14, borderRadius: '50%', background: '#fff', transition: 'left .2s', boxShadow: '0 1px 3px rgba(0,0,0,.3)' }} />
+                        </div>
+                        自动刷新
                     </label>
-                    <button className="rcon-btn" style={{ padding: '4px 10px', fontSize: 11, width: 'auto' }} onClick={() => { fetchServerState(); fetchBansWarns(); }}>🔄</button>
+                    <button
+                        onClick={() => { fetchServerState(); fetchBansWarns(); }}
+                        style={{ width: 28, height: 28, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text2)', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all .15s' }}
+                        title="手动刷新"
+                    >🔄</button>
                 </div>
             </div>
 
-            {/* 通知 */}
+            {/* ═══ 通知区域 ═══ */}
             {notifications.map(n => (
-                <div key={n.id} style={{ padding: '6px 12px', fontSize: 12, borderRadius: 6, background: n.type === 'join' ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.1)', color: n.type === 'join' ? '#22c55e' : 'var(--red)', animation: 'fadeIn 0.3s' }}>{n.text}</div>
+                <div key={n.id} className="badge" style={{
+                    padding: '8px 14px', fontSize: 12, borderRadius: 6, animation: 'fadeIn .3s', fontWeight: 500,
+                    background: n.type === 'join' ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
+                    color: n.type === 'join' ? '#22c55e' : 'var(--red)',
+                    border: `1px solid ${n.type === 'join' ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)'}`,
+                }}>{n.type === 'join' ? '✅' : '👋'} {n.text}</div>
             ))}
 
-            {/* 服务器信息条 */}
+            {/* ═══ 服务器状态卡片 ═══ */}
             {serverInfo && (
-                <div className="card" style={{ background: 'var(--bg3)' }}>
-                    <div className="card-body" style={{ padding: '8px 16px', display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center', fontSize: 12 }}>
-                        <span><strong>{serverInfo.server_name || selectedServer?.name}</strong></span>
-                        <span style={{ color: '#22c55e' }}>👥 {serverInfo.player_count}/{serverInfo.max_players}</span>
-                        <span>🗺️ {serverInfo.map_name} ({serverInfo.game_mode})</span>
-                        <span style={{ color: 'var(--text2)' }}>→ {serverInfo.next_map}</span>
+                <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
+                    <div style={{ padding: '14px 20px', display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'center' }}>
+                        {/* 服务器名 */}
+                        <div style={{ minWidth: 0, flex: '0 0 auto' }}>
+                            <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 260 }}>
+                                🖥️ {serverInfo.server_name || selectedServer?.name}
+                            </div>
+                        </div>
+
+                        <div style={{ width: 1, height: 24, background: 'var(--border)', flexShrink: 0 }} />
+
+                        {/* 玩家数 */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+                            <span style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap' }}>
+                                👥 {serverInfo.player_count}<span style={{ color: 'var(--text3)', fontWeight: 400 }}>/{serverInfo.max_players}</span>
+                            </span>
+                            <div style={{ width: 80, height: 6, borderRadius: 3, background: 'var(--bg3)', overflow: 'hidden' }}>
+                                <div style={{ height: '100%', borderRadius: 3, background: playerPct > 90 ? '#ef4444' : playerPct > 70 ? '#f59e0b' : '#22c55e', width: `${Math.min(100, playerPct)}%`, transition: 'width .5s ease' }} />
+                            </div>
+                        </div>
+
+                        <div style={{ width: 1, height: 24, background: 'var(--border)', flexShrink: 0 }} />
+
+                        {/* 地图信息 */}
+                        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center', flex: 1, minWidth: 0 }}>
+                            <span style={{ fontSize: 13, whiteSpace: 'nowrap' }}>
+                                🗺️ <strong>{serverInfo.map_name}</strong>
+                                <span style={{ color: 'var(--text3)', marginLeft: 6 }}>({serverInfo.game_mode})</span>
+                            </span>
+                            {serverInfo.next_map && (
+                                <span style={{ fontSize: 12, color: 'var(--text2)', whiteSpace: 'nowrap' }}>
+                                    → <span style={{ color: 'var(--text3)' }}>下一张:</span> {serverInfo.next_map}
+                                </span>
+                            )}
+                        </div>
+
+                        {/* 阵营旗帜 */}
+                        {serverState?.teams && serverState.teams.length >= 2 && (
+                            <>
+                                <div style={{ width: 1, height: 24, background: 'var(--border)', flexShrink: 0 }} />
+                                <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexShrink: 0, fontSize: 12 }}>
+                                    <span>{factionFlag(serverState.teams[0]?.faction || '')} {serverState.teams[0]?.faction || '—'}</span>
+                                    <span style={{ color: 'var(--text3)', fontWeight: 700 }}>VS</span>
+                                    <span>{factionFlag(serverState.teams[1]?.faction || '')} {serverState.teams[1]?.faction || '—'}</span>
+                                </div>
+                            </>
+                        )}
                     </div>
                 </div>
             )}
-            {actionMsg && <div style={{ padding: '8px 14px', fontSize: 12, borderRadius: 'var(--radius)', background: actionMsg.includes('失败') ? 'rgba(239,68,68,0.1)' : 'rgba(34,197,94,0.1)', color: actionMsg.includes('失败') ? 'var(--red)' : '#22c55e' }}>{actionMsg}</div>}
 
-            <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: 20, alignItems: 'start' }}>
-                {/* 左侧面板 */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                    {/* 服务器信息 */}
+            {actionMsg && (
+                <div style={{ padding: '8px 14px', fontSize: 12, borderRadius: 6, background: actionMsg.includes('失败') ? 'rgba(239,68,68,0.08)' : 'rgba(34,197,94,0.08)', color: actionMsg.includes('失败') ? 'var(--red)' : '#22c55e', border: `1px solid ${actionMsg.includes('失败') ? 'rgba(239,68,68,0.15)' : 'rgba(34,197,94,0.15)'}`, fontWeight: 500 }}>
+                    {actionMsg}
+                </div>
+            )}
+
+            {/* ═══ 主内容区 ═══ */}
+            <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 16, alignItems: 'start' }}>
+                {/* ═══ 左侧面板 ═══ */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    {/* 服务器信息卡片 */}
                     {selectedServer && (
                         <div className="card">
-                            <div className="card-header"><div className="card-title">服务器信息</div></div>
-                            <div className="card-body" style={{ display: 'flex', flexDirection: 'column', gap: 10, fontSize: 13 }}>
-                                <InfoRow label="ID" value={selectedServer.server_id} />
-                                <InfoRow label="IP" value={`${selectedServer.ip}:${selectedServer.rcon_port}`} />
-                                <button onClick={() => handleDeleteClick(selectedServer)} style={{ width: '100%', padding: '6px 0', background: 'transparent', border: '1px solid var(--red)', borderRadius: 'var(--radius)', color: 'var(--red)', cursor: 'pointer', fontSize: 12 }}>删除服务器</button>
+                            <div className="card-header" style={{ padding: '10px 14px' }}>
+                                <div className="card-title" style={{ fontSize: 13 }}>📡 连接信息</div>
                             </div>
-                        </div>
-                    )}
-
-                    {/* 快捷命令 */}
-                    {selectedServer && (
-                        <div className="card">
-                            <div className="card-header"><div className="card-title">快捷命令</div></div>
-                            <div className="card-body" style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                                {QUICK_COMMANDS.map(qc => (
-                                    <button key={qc.cmd} className="rcon-btn" style={{ fontSize: 11, padding: '4px 10px', width: 'auto' }} onClick={() => sendRcon(qc.cmd)}>{qc.label}</button>
-                                ))}
+                            <div className="card-body" style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8, fontSize: 12 }}>
+                                <InfoRow label="服务器 ID" value={String(selectedServer.server_id)} />
+                                <InfoRow label="地址" value={`${selectedServer.ip}:${selectedServer.rcon_port}`} />
+                                <button
+                                    onClick={() => handleDeleteClick(selectedServer)}
+                                    style={{
+                                        width: '100%', marginTop: 4, padding: '7px 0', background: 'transparent',
+                                        border: '1px solid rgba(239,68,68,0.3)', borderRadius: 6,
+                                        color: 'var(--red)', cursor: 'pointer', fontSize: 11, fontWeight: 500,
+                                        transition: 'all .15s',
+                                    }}
+                                    onMouseEnter={e => { e.currentTarget.style.background = 'rgba(239,68,68,0.08)'; }}
+                                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+                                >删除服务器</button>
                             </div>
                         </div>
                     )}
@@ -295,172 +369,370 @@ export default function ControlPanelPage() {
                     {/* RCON 命令 */}
                     {selectedServer && (
                         <div className="card">
-                            <div className="card-header"><div className="card-title">RCON</div></div>
-                            <div className="card-body">
-                                <input type="text" className="rcon-input" placeholder="输入指令..." value={rconCommand} onChange={e => setRconCommand(e.target.value)} onKeyDown={e => e.key === 'Enter' && sendRcon()} />
-                                <button className="rcon-btn" style={{ marginTop: 6 }} onClick={() => sendRcon()}>发送</button>
-                                {rconResult && <div className="terminal" style={{ marginTop: 8, maxHeight: 120, overflowY: 'auto', fontSize: 11, padding: 8, whiteSpace: 'pre-wrap' }}>{rconResult}</div>}
+                            <div className="card-header" style={{ padding: '10px 14px' }}>
+                                <div className="card-title" style={{ fontSize: 13 }}>⌨️ RCON 命令</div>
+                            </div>
+                            <div className="card-body" style={{ padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                <div style={{ display: 'flex', gap: 6 }}>
+                                    <input
+                                        type="text"
+                                        className="rcon-input"
+                                        placeholder="输入 RCON 指令..."
+                                        value={rconCommand}
+                                        onChange={e => setRconCommand(e.target.value)}
+                                        onKeyDown={e => e.key === 'Enter' && sendRcon()}
+                                        style={{ flex: 1, fontSize: 12, padding: '8px 10px' }}
+                                    />
+                                    <button
+                                        className="rcon-btn"
+                                        onClick={() => sendRcon()}
+                                        style={{ width: 'auto', padding: '8px 14px', fontSize: 12 }}
+                                    >发送</button>
+                                </div>
+                                {rconResult && (
+                                    <div className="terminal" style={{ maxHeight: 140, overflowY: 'auto', fontSize: 11, padding: 10, whiteSpace: 'pre-wrap', wordBreak: 'break-all', borderRadius: 6 }}>
+                                        {rconResult}
+                                    </div>
+                                )}
                             </div>
                         </div>
                     )}
 
-                    {/* 快速广播 */}
+                    {/* 快捷命令 */}
                     {selectedServer && (
                         <div className="card">
-                            <div className="card-header"><div className="card-title">广播</div></div>
-                            <div className="card-body">
-                                <input type="text" className="rcon-input" placeholder="广播内容..." value={broadcastMsg} onChange={e => setBroadcastMsg(e.target.value)} onKeyDown={e => e.key === 'Enter' && sendBroadcast()} />
-                                <button className="rcon-btn" style={{ marginTop: 6 }} onClick={sendBroadcast}>发送</button>
+                            <div className="card-header" style={{ padding: '10px 14px' }}>
+                                <div className="card-title" style={{ fontSize: 13 }}>⚡ 快捷命令</div>
+                            </div>
+                            <div className="card-body" style={{ padding: '8px 14px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                {QUICK_COMMANDS.map(qc => (
+                                    <button
+                                        key={qc.cmd}
+                                        onClick={() => sendRcon(qc.cmd)}
+                                        style={{
+                                            width: '100%', padding: '7px 12px', border: '1px solid var(--border)',
+                                            borderRadius: 6, background: 'var(--bg3)', color: 'var(--text2)',
+                                            cursor: 'pointer', fontSize: 12, textAlign: 'left',
+                                            transition: 'all .12s', display: 'flex', gap: 8, alignItems: 'center',
+                                        }}
+                                        onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg4)'; e.currentTarget.style.color = 'var(--text)'; }}
+                                        onMouseLeave={e => { e.currentTarget.style.background = 'var(--bg3)'; e.currentTarget.style.color = 'var(--text2)'; }}
+                                    ><span style={{ fontSize: 14 }}>{qc.icon}</span> {qc.label}</button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* 广播 */}
+                    {selectedServer && (
+                        <div className="card">
+                            <div className="card-header" style={{ padding: '10px 14px' }}>
+                                <div className="card-title" style={{ fontSize: 13 }}>📢 游戏广播</div>
+                            </div>
+                            <div className="card-body" style={{ padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                <input
+                                    type="text"
+                                    className="rcon-input"
+                                    placeholder="输入广播内容..."
+                                    value={broadcastMsg}
+                                    onChange={e => setBroadcastMsg(e.target.value)}
+                                    onKeyDown={e => e.key === 'Enter' && sendBroadcast()}
+                                    style={{ fontSize: 12, padding: '8px 10px' }}
+                                />
+                                <button
+                                    className="rcon-btn"
+                                    onClick={sendBroadcast}
+                                    disabled={!broadcastMsg}
+                                    style={{ fontSize: 12, padding: '8px 14px', opacity: broadcastMsg ? 1 : 0.4 }}
+                                >发送广播</button>
                             </div>
                         </div>
                     )}
                 </div>
 
-                {/* 右侧面板 */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                    {/* 右侧标签：控制 / 聊天 / 日志 */}
+                {/* ═══ 右侧面板 ═══ */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                     <div className="card">
+                        {/* 右侧主标签 */}
                         <div style={{ display: 'flex', borderBottom: '1px solid var(--border)' }}>
-                            {(['control', 'chat', 'logs'] as const).map(tab => (
-                                <button key={tab} onClick={() => setRightTab(tab)} style={{ flex: 1, padding: '10px', fontSize: 12, border: 'none', background: 'transparent', cursor: 'pointer', borderBottom: rightTab === tab ? '2px solid var(--text)' : '2px solid transparent', color: rightTab === tab ? 'var(--text)' : 'var(--text3)', fontWeight: rightTab === tab ? 600 : 400 }}>
-                                    {tab === 'control' ? '👥 玩家控制' : tab === 'chat' ? `💬 实时聊天 (${chatMsgs.length})` : `📋 日志 (${logs.length})`}
+                            {([
+                                { k: 'control' as const, label: '👥 玩家管理', hint: serverState?.players?.length || 0 },
+                                { k: 'chat' as const, label: '💬 实时聊天', hint: chatMsgs.length },
+                                { k: 'logs' as const, label: '📋 系统日志', hint: logs.length },
+                            ]).map(t => (
+                                <button
+                                    key={t.k}
+                                    onClick={() => setRightTab(t.k)}
+                                    style={{
+                                        flex: 1, padding: '12px', fontSize: 12, border: 'none', background: 'transparent',
+                                        cursor: 'pointer', fontWeight: rightTab === t.k ? 600 : 400,
+                                        color: rightTab === t.k ? 'var(--text)' : 'var(--text3)',
+                                        borderBottom: rightTab === t.k ? '2px solid var(--text)' : '2px solid transparent',
+                                        transition: 'all .12s', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                                    }}
+                                >
+                                    {t.label}
+                                    {t.hint > 0 && (
+                                        <span style={{ fontSize: 10, background: rightTab === t.k ? 'var(--text)' : 'var(--bg3)', color: rightTab === t.k ? 'var(--bg)' : 'var(--text3)', padding: '1px 6px', borderRadius: 10, fontWeight: 600 }}>
+                                            {t.hint}
+                                        </span>
+                                    )}
                                 </button>
                             ))}
                         </div>
 
-                        {/* 玩家控制 */}
+                        {/* ═══ 玩家管理 ═══ */}
                         {rightTab === 'control' && selectedServer && (
                             <div>
-                                {/* 子标签 */}
+                                {/* 子标签：玩家 / 封禁 / 警告 */}
                                 <div style={{ display: 'flex', borderBottom: '1px solid var(--border)' }}>
-                                    {(['players', 'bans', 'warns'] as const).map(tab => (
-                                        <button key={tab} onClick={() => setActiveTab(tab)} style={{ padding: '6px 14px', fontSize: 11, border: 'none', background: 'transparent', cursor: 'pointer', borderBottom: activeTab === tab ? '2px solid var(--text)' : '2px solid transparent', color: activeTab === tab ? 'var(--text)' : 'var(--text3)' }}>
-                                            {tab === 'players' ? '玩家' : tab === 'bans' ? '封禁' : '警告'}
-                                        </button>
+                                    {[
+                                        { k: 'players' as const, label: '玩家列表' },
+                                        { k: 'bans' as const, label: '封禁记录' },
+                                        { k: 'warns' as const, label: '警告记录' },
+                                    ].map(t => (
+                                        <button
+                                            key={t.k}
+                                            onClick={() => setActiveTab(t.k)}
+                                            style={{
+                                                padding: '8px 16px', fontSize: 11, border: 'none', background: 'transparent',
+                                                cursor: 'pointer', fontWeight: activeTab === t.k ? 600 : 400,
+                                                color: activeTab === t.k ? 'var(--text)' : 'var(--text3)',
+                                                borderBottom: activeTab === t.k ? '2px solid var(--text)' : '2px solid transparent',
+                                                transition: 'all .12s',
+                                            }}
+                                        >{t.label}</button>
                                     ))}
+                                    <div style={{ flex: 1 }} />
+                                    {serverStateLoading && <span style={{ fontSize: 10, color: 'var(--text3)', alignSelf: 'center', paddingRight: 12 }}>刷新中...</span>}
                                 </div>
-                                <div className="card-body" style={{ padding: 0 }}>
-                                    {activeTab === 'players' && (serverState ? (
-                                        <div>
-                                            <div style={{ display: 'flex', borderBottom: '1px solid var(--border)' }}>
-                                                {[
-                                                    ...(serverState.teams && serverState.teams.length > 0
-                                                        ? serverState.teams
-                                                        : [{team_id: 1, faction: '队伍 1'}, {team_id: 2, faction: '队伍 2'}]),
-                                                    {team_id: 0, faction: '观战/部署'},
+
+                                {/* 玩家列表 */}
+                                {activeTab === 'players' && (serverState ? (
+                                    <div>
+                                        {/* 阵营标签 */}
+                                        <div style={{ display: 'flex', background: 'var(--bg3)' }}>
+                                            {(() => {
+                                                const teams = serverState.teams?.length > 0
+                                                    ? serverState.teams
+                                                    : [{ team_id: 1, faction: '队伍 1' }, { team_id: 2, faction: '队伍 2' }];
+                                                return [
+                                                    ...teams,
+                                                    { team_id: 0, faction: '未部署' },
                                                 ].map((t: any) => {
                                                     const cnt = (serverState.players || []).filter((p: any) => p.team_id === t.team_id).length;
                                                     if (t.team_id === 0 && cnt === 0) return null;
+                                                    const active = selectedTeam === t.team_id;
                                                     return (
-                                                        <div key={t.team_id} onClick={() => setSelectedTeam(t.team_id)} style={{ flex: 1, padding: '8px', cursor: 'pointer', textAlign: 'center', fontSize: 12, borderBottom: selectedTeam === t.team_id ? '2px solid var(--text)' : '2px solid transparent', color: selectedTeam === t.team_id ? 'var(--text)' : 'var(--text3)' }}>{t.faction} ({cnt})</div>
+                                                        <button
+                                                            key={t.team_id}
+                                                            onClick={() => setSelectedTeam(t.team_id)}
+                                                            style={{
+                                                                flex: 1, padding: '10px 12px', cursor: 'pointer', textAlign: 'center', fontSize: 12,
+                                                                border: 'none', background: active ? 'var(--bg2)' : 'transparent',
+                                                                color: active ? 'var(--text)' : 'var(--text3)',
+                                                                borderBottom: active ? '2px solid var(--text)' : '2px solid transparent',
+                                                                transition: 'all .12s', fontWeight: active ? 600 : 400,
+                                                            }}
+                                                        >
+                                                            <span style={{ fontSize: 16, marginRight: 4 }}>{factionFlag(t.faction)}</span>
+                                                            {t.faction} <span style={{ opacity: 0.5 }}>({cnt})</span>
+                                                        </button>
                                                     );
-                                                })}
-                                            </div>
+                                                });
+                                            })()}
+                                        </div>
+
+                                        {/* 小队列表 */}
+                                        <div style={{ maxHeight: 420, overflowY: 'auto' }}>
                                             {[selectedTeam].map(teamId => {
                                                 const tp = (serverState.players || []).filter((p: any) => p.team_id === teamId);
                                                 const ts = (serverState.squads || []).filter((s: any) => s.team_id === teamId);
                                                 const sp = (sid: string | null) => tp.filter((p: any) => p.squad_id === sid);
                                                 const us = tp.filter((p: any) => !p.squad_id);
-                                                // 找出有 squad_id 但 squad 列表里不存在的孤立玩家
                                                 const orphanSquadIds = new Set<string>();
                                                 tp.forEach((p: any) => {
-                                                    if (p.squad_id && !ts.some((s: any) => s.squad_id === p.squad_id)) {
+                                                    if (p.squad_id && !ts.some((s: any) => s.squad_id === p.squad_id))
                                                         orphanSquadIds.add(p.squad_id);
-                                                    }
                                                 });
+
+                                                if (tp.length === 0) return <div key={teamId} style={{ padding: 40, textAlign: 'center', color: 'var(--text3)' }}>无玩家</div>;
+
                                                 return (
-                                                    <div key={teamId} style={{ maxHeight: 400, overflowY: 'auto' }}>
-                                                        {ts.map((sq: any) => (
-                                                            <div key={sq.name} style={{ borderBottom: '1px solid var(--border)' }}>
-                                                                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 12px', background: 'var(--bg3)', fontSize: 12 }}>
-                                                                    <strong>{sq.name}</strong>
-                                                                    <span style={{ color: 'var(--text3)', fontSize: 11 }}>{sq.creator} ({sp(sq.squad_id).length})</span>
-                                                                    <span className="badge red" style={{ cursor: 'pointer', fontSize: 9 }} onClick={() => { if (confirm(`解散 ${sq.name}?`)) execDisbandSquad(teamId, sq.squad_id); }}>解散</span>
-                                                                </div>
-                                                                <PlayerTable players={sp(sq.squad_id)} onAction={execPlayerAction} />
-                                                            </div>
-                                                        ))}
+                                                    <div key={teamId}>
+                                                        {ts.map((sq: any) => {
+                                                            const members = sp(sq.squad_id);
+                                                            return (
+                                                                <SquadBlock
+                                                                    key={sq.name}
+                                                                    squad={sq}
+                                                                    members={members}
+                                                                    onAction={execPlayerAction}
+                                                                    onDisband={() => { if (confirm(`解散 ${sq.name}?`)) execDisbandSquad(teamId, sq.squad_id); }}
+                                                                />
+                                                            );
+                                                        })}
                                                         {Array.from(orphanSquadIds).map(sid => (
-                                                            <div key={`orphan-${sid}`} style={{ borderBottom: '1px solid var(--border)' }}>
-                                                                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 12px', background: 'var(--bg3)', fontSize: 12 }}>
-                                                                    <strong>小队 {sid}</strong>
-                                                                    <span style={{ color: 'var(--text3)', fontSize: 11 }}>({sp(sid).length})</span>
-                                                                </div>
-                                                                <PlayerTable players={sp(sid)} onAction={execPlayerAction} />
-                                                            </div>
+                                                            <SquadBlock
+                                                                key={`orphan-${sid}`}
+                                                                squad={{ name: `小队 ${sid}`, creator: '—', squad_id: sid }}
+                                                                members={sp(sid)}
+                                                                onAction={execPlayerAction}
+                                                                onDisband={() => { if (confirm(`解散 小队 ${sid}?`)) execDisbandSquad(teamId, sid); }}
+                                                            />
                                                         ))}
-                                                        {us.length > 0 && <div style={{ borderBottom: '1px solid var(--border)' }}><div style={{ padding: '6px 12px', background: 'var(--bg3)', fontSize: 12, color: 'var(--text3)' }}>未入队 ({us.length})</div><PlayerTable players={us} onAction={execPlayerAction} /></div>}
+                                                        {us.length > 0 && (
+                                                            <SquadBlock
+                                                                squad={{ name: '未入队', creator: '', squad_id: null }}
+                                                                members={us}
+                                                                onAction={execPlayerAction}
+                                                                onDisband={null}
+                                                                collapsed={false}
+                                                            />
+                                                        )}
                                                     </div>
                                                 );
                                             })}
                                         </div>
-                                    ) : <div style={{ padding: 30, textAlign: 'center', color: 'var(--text3)' }}>
-                                        <p>点击刷新获取玩家列表</p>
-                                        <p style={{ fontSize: 10, marginTop: 8 }}>serverState: {JSON.stringify(serverState)}</p>
-                                        <p style={{ fontSize: 10 }}>selectedServer: {selectedServer?.id}</p>
-                                        <p style={{ fontSize: 10 }}>rightTab: {rightTab} | activeTab: {activeTab}</p>
-                                    </div>)}
-                                    {activeTab === 'bans' && (bans.length > 0 ? <table style={{ width: '100%', fontSize: 12 }}><thead><tr style={{ borderBottom: '2px solid var(--border)' }}><th style={{ padding: '8px 12px', color: 'var(--text3)' }}>玩家</th><th style={{ padding: '8px 12px', color: 'var(--text3)' }}>时长</th><th style={{ padding: '8px 12px', color: 'var(--text3)' }}>原因</th></tr></thead><tbody>{bans.map((b, i) => <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}><td style={{ padding: '6px 12px' }}>{b.player_name}</td><td style={{ padding: '6px 12px' }}><span className="badge red">{b.duration}</span></td><td style={{ padding: '6px 12px', color: 'var(--text2)' }}>{b.reason}</td></tr>)}</tbody></table> : <div style={{ padding: 20, textAlign: 'center', color: 'var(--text3)' }}>✅ 无封禁</div>)}
-                                    {activeTab === 'warns' && (warns.length > 0 ? <table style={{ width: '100%', fontSize: 12 }}><thead><tr style={{ borderBottom: '2px solid var(--border)' }}><th style={{ padding: '8px 12px', color: 'var(--text3)' }}>玩家</th><th style={{ padding: '8px 12px', color: 'var(--text3)' }}>原因</th></tr></thead><tbody>{warns.map((w, i) => <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}><td style={{ padding: '6px 12px' }}>{w.player_name}</td><td style={{ padding: '6px 12px', color: 'var(--text2)' }}>{w.reason}</td></tr>)}</tbody></table> : <div style={{ padding: 20, textAlign: 'center', color: 'var(--text3)' }}>✅ 无警告</div>)}
-                                </div>
+                                    </div>
+                                ) : (
+                                    <div style={{ padding: 40, textAlign: 'center', color: 'var(--text3)' }}>
+                                        {serverStateLoading ? '加载中...' : '点击右上角 🔄 刷新获取玩家列表'}
+                                    </div>
+                                ))}
+
+                                {/* 封禁列表 */}
+                                {activeTab === 'bans' && (
+                                    bans.length > 0 ? (
+                                        <table style={{ fontSize: 12 }}>
+                                            <thead><tr>
+                                                <th style={{ padding: '10px 14px' }}>玩家</th>
+                                                <th style={{ padding: '10px 14px' }}>时长</th>
+                                                <th style={{ padding: '10px 14px' }}>原因</th>
+                                                <th style={{ padding: '10px 14px' }}>管理员</th>
+                                            </tr></thead>
+                                            <tbody>{bans.map((b, i) => (
+                                                <tr key={i}>
+                                                    <td style={{ padding: '8px 14px', fontWeight: 500 }}>{b.player_name}</td>
+                                                    <td style={{ padding: '8px 14px' }}><span className="badge red">{b.duration}</span></td>
+                                                    <td style={{ padding: '8px 14px', color: 'var(--text2)' }}>{b.reason}</td>
+                                                    <td style={{ padding: '8px 14px', color: 'var(--text3)' }}>{b.admin}</td>
+                                                </tr>
+                                            ))}</tbody>
+                                        </table>
+                                    ) : <div style={{ padding: 30, textAlign: 'center', color: 'var(--text3)' }}>✅ 无封禁记录</div>
+                                )}
+
+                                {/* 警告列表 */}
+                                {activeTab === 'warns' && (
+                                    warns.length > 0 ? (
+                                        <table style={{ fontSize: 12 }}>
+                                            <thead><tr>
+                                                <th style={{ padding: '10px 14px' }}>玩家</th>
+                                                <th style={{ padding: '10px 14px' }}>原因</th>
+                                                <th style={{ padding: '10px 14px' }}>管理员</th>
+                                            </tr></thead>
+                                            <tbody>{warns.map((w, i) => (
+                                                <tr key={i}>
+                                                    <td style={{ padding: '8px 14px', fontWeight: 500 }}>{w.player_name}</td>
+                                                    <td style={{ padding: '8px 14px', color: 'var(--text2)' }}>{w.reason}</td>
+                                                    <td style={{ padding: '8px 14px', color: 'var(--text3)' }}>{w.admin}</td>
+                                                </tr>
+                                            ))}</tbody>
+                                        </table>
+                                    ) : <div style={{ padding: 30, textAlign: 'center', color: 'var(--text3)' }}>✅ 无警告记录</div>
+                                )}
                             </div>
                         )}
 
-                        {/* 实时聊天 */}
+                        {/* ═══ 实时聊天 ═══ */}
                         {rightTab === 'chat' && (
-                            <div className="terminal" style={{ border: 'none', borderRadius: 0, height: 500, overflowY: 'auto', padding: '10px 14px', fontFamily: 'monospace', fontSize: 12, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                                {chatMsgs.length === 0 && <div style={{ color: 'var(--text3)', textAlign: 'center', padding: 40 }}>等待聊天消息...</div>}
+                            <div style={{ height: 500, overflowY: 'auto', padding: '10px 0', display: 'flex', flexDirection: 'column' }}>
+                                {chatMsgs.length === 0 && <div style={{ color: 'var(--text3)', textAlign: 'center', padding: 60 }}>等待聊天消息...</div>}
                                 {chatMsgs.map((c, i) => (
-                                    <div key={i} style={{ lineHeight: 1.5 }}>
-                                        <span style={{ color: 'var(--text3)', fontSize: 10 }}>{c.time.toLocaleTimeString()} </span>
-                                        <span style={{ color: c.channel === 'Team' ? '#3b82f6' : c.channel === 'Squad' ? '#22c55e' : c.channel === 'Admin' ? '#f59e0b' : '#a78bfa', fontSize: 10 }}>[{c.channel}] </span>
-                                        <span style={{ fontWeight: 600 }}>{c.player}</span>
-                                        <span style={{ color: 'var(--text2)' }}>: {c.message}</span>
+                                    <div key={i} style={{
+                                        padding: '5px 14px', display: 'flex', gap: 8, alignItems: 'baseline',
+                                        borderBottom: '1px solid var(--border)',
+                                        transition: 'background .1s',
+                                    }}>
+                                        <span style={{ color: 'var(--text3)', fontSize: 10, fontFamily: 'monospace', flexShrink: 0, width: 72, textAlign: 'right' }}>
+                                            {c.time.toLocaleTimeString()}
+                                        </span>
+                                        <span style={{
+                                            fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 3,
+                                            background: (CHANNEL_COLORS[c.channel] || '#a78bfa') + '22',
+                                            color: CHANNEL_COLORS[c.channel] || '#a78bfa',
+                                            flexShrink: 0, textTransform: 'uppercase',
+                                        }}>{c.channel}</span>
+                                        <span style={{ fontWeight: 600, fontSize: 12, flexShrink: 0, color: 'var(--text)' }}>{c.player}</span>
+                                        <span style={{ color: 'var(--text2)', fontSize: 12, wordBreak: 'break-word' }}>{c.message}</span>
                                     </div>
                                 ))}
                                 <div ref={chatEndRef} />
                             </div>
                         )}
 
-                        {/* 实时日志 */}
+                        {/* ═══ 系统日志 ═══ */}
                         {rightTab === 'logs' && (
-                            <div className="terminal" style={{ border: 'none', borderRadius: 0, height: 500, overflowY: 'auto', padding: '10px 14px', fontFamily: 'monospace', fontSize: 11 }}>
-                                {logs.length === 0 && <div style={{ color: 'var(--text3)' }}>等待日志...</div>}
+                            <div style={{ height: 500, overflowY: 'auto', padding: '10px 0', fontFamily: "'JetBrains Mono', 'Fira Code', monospace", fontSize: 11 }}>
+                                {logs.length === 0 && <div style={{ color: 'var(--text3)', textAlign: 'center', padding: 60 }}>等待日志...</div>}
                                 {logs.map((entry, i) => (
-                                    <div key={i}>
-                                        <span className="time">[{new Date(entry.logged_at).toLocaleTimeString()}]</span>
-                                        <span className={entry.log_level === 'ERROR' ? 'error' : entry.log_level === 'WARN' ? 'warn' : 'info'}>[{entry.category || 'General'}]</span> {entry.message}
+                                    <div key={i} style={{
+                                        padding: '3px 14px', display: 'flex', gap: 8, alignItems: 'baseline',
+                                        borderBottom: '1px solid var(--border)',
+                                        lineHeight: 1.7,
+                                    }}>
+                                        <span style={{ color: 'var(--text3)', flexShrink: 0, fontSize: 10 }}>
+                                            [{new Date(entry.logged_at).toLocaleTimeString()}]
+                                        </span>
+                                        <span style={{
+                                            color: LOG_LEVEL_COLORS[entry.log_level] || 'var(--text3)',
+                                            flexShrink: 0, fontSize: 10, fontWeight: 600,
+                                        }}>
+                                            {entry.log_level}
+                                        </span>
+                                        <span style={{ color: 'var(--text2)', flexShrink: 0, fontSize: 10, opacity: 0.7 }}>
+                                            [{entry.category || 'General'}]
+                                        </span>
+                                        <span style={{ color: 'var(--text2)', wordBreak: 'break-all' }}>{entry.message}</span>
                                     </div>
                                 ))}
-                                <div ref={logsEndRef}>_</div>
+                                <div ref={logsEndRef} style={{ height: 1 }} />
                             </div>
                         )}
                     </div>
                 </div>
             </div>
 
-            {/* 删除确认 Modal */}
+            {/* ═══ 删除确认 Modal ═══ */}
             {deleteTarget && (
                 <Modal onClose={() => setDeleteTarget(null)}>
-                    <h3 style={{ color: 'var(--red)', marginBottom: 12 }}>删除服务器</h3>
-                    <p style={{ color: 'var(--text2)', fontSize: 13, marginBottom: 16 }}>确定删除 {deleteTarget.name}？此操作不可撤销。</p>
+                    <h3 style={{ color: 'var(--red)', marginBottom: 12, fontSize: 16 }}>⚠️ 删除服务器</h3>
+                    <p style={{ color: 'var(--text2)', fontSize: 13, marginBottom: 16, lineHeight: 1.6 }}>
+                        确定删除 <strong style={{ color: 'var(--text)' }}>{deleteTarget.name}</strong>？此操作不可撤销。
+                    </p>
                     {deleteError && <div style={{ color: 'var(--red)', marginBottom: 12, fontSize: 12 }}>{deleteError}</div>}
                     <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                        <button className="rcon-btn" style={{ background: 'var(--bg3)' }} onClick={() => setDeleteTarget(null)} disabled={deleting}>取消</button>
-                        <button onClick={handleConfirmDelete} disabled={deleting} style={{ padding: '8px 20px', background: 'var(--red)', border: 'none', borderRadius: 'var(--radius)', color: '#fff', cursor: 'pointer', fontSize: 13, opacity: deleting ? 0.5 : 1 }}>{deleting ? '删除中...' : '确认删除'}</button>
+                        <button onClick={() => setDeleteTarget(null)} disabled={deleting} style={{ padding: '8px 18px', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text2)', cursor: 'pointer', fontSize: 12 }}>
+                            取消
+                        </button>
+                        <button onClick={handleConfirmDelete} disabled={deleting} style={{ padding: '8px 18px', background: 'var(--red)', border: 'none', borderRadius: 6, color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 600, opacity: deleting ? 0.5 : 1 }}>
+                            {deleting ? '删除中...' : '确认删除'}
+                        </button>
                     </div>
                 </Modal>
             )}
 
-            {/* 添加服务器 Modal */}
+            {/* ═══ 添加服务器 Modal ═══ */}
             {showAddModal && (
                 <Modal onClose={() => setShowAddModal(false)}>
-                    <h3 style={{ marginBottom: 16 }}>添加游戏服务器</h3>
+                    <h3 style={{ marginBottom: 18, fontSize: 16 }}>🖥️ 添加游戏服务器</h3>
                     {newToken ? (
                         <div>
-                            <div className="terminal" style={{ padding: 12, marginBottom: 12, wordBreak: 'break-all', fontSize: 13 }}>
-                                Agent Token：<br />
-                                <code style={{ color: '#22c55e' }}>{newToken}</code>
+                            <div className="terminal" style={{ padding: 16, marginBottom: 14, wordBreak: 'break-all', fontSize: 13, borderColor: 'rgba(34,197,94,0.3)' }}>
+                                <div style={{ color: '#22c55e', fontWeight: 600, marginBottom: 8 }}>✅ 服务器已添加</div>
+                                <div style={{ color: 'var(--text3)', fontSize: 11, marginBottom: 4 }}>Agent Token（请在游戏服务器 .env 中配置）：</div>
+                                <code style={{ color: '#22c55e', fontSize: 12 }}>{newToken}</code>
                             </div>
                             <button className="rcon-btn" onClick={() => setShowAddModal(false)}>关闭</button>
                         </div>
@@ -468,12 +740,14 @@ export default function ControlPanelPage() {
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                             <input className="rcon-input" placeholder="服务器名称" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
                             <input className="rcon-input" placeholder="服务器 IP" value={form.ip} onChange={e => setForm({ ...form, ip: e.target.value })} />
-                            <input className="rcon-input" type="number" placeholder="RCON 端口" value={form.rcon_port || ''} onChange={e => setForm({ ...form, rcon_port: parseInt(e.target.value) || 0 })} />
-                            <input className="rcon-input" type="password" placeholder="RCON 密码" value={form.rcon_password} onChange={e => setForm({ ...form, rcon_password: e.target.value })} />
+                            <div style={{ display: 'flex', gap: 10 }}>
+                                <input className="rcon-input" type="number" placeholder="RCON 端口" value={form.rcon_port || ''} onChange={e => setForm({ ...form, rcon_port: parseInt(e.target.value) || 0 })} style={{ flex: 1 }} />
+                                <input className="rcon-input" type="password" placeholder="RCON 密码" value={form.rcon_password} onChange={e => setForm({ ...form, rcon_password: e.target.value })} style={{ flex: 2 }} />
+                            </div>
                             {error && <div style={{ color: 'var(--red)', fontSize: 12 }}>{error}</div>}
                             <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
                                 <button className="rcon-btn" onClick={handleAddServer} disabled={submitting}>{submitting ? '验证中...' : '验证并添加'}</button>
-                                <button className="rcon-btn" style={{ background: 'var(--bg3)' }} onClick={() => setShowAddModal(false)}>取消</button>
+                                <button onClick={() => setShowAddModal(false)} style={{ padding: '10px 16px', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text2)', cursor: 'pointer', fontSize: 13 }}>取消</button>
                             </div>
                         </div>
                     )}
@@ -483,33 +757,126 @@ export default function ControlPanelPage() {
     );
 }
 
+/* ═══ 子组件 ═══ */
+
 function InfoRow({ label, value }: { label: string; value: string }) {
-    return <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border)', paddingBottom: 6 }}><span style={{ color: 'var(--text3)', fontSize: 11 }}>{label}</span><span style={{ fontWeight: 600 }}>{value}</span></div>;
+    return (
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border)', paddingBottom: 6 }}>
+            <span style={{ color: 'var(--text3)', fontSize: 11 }}>{label}</span>
+            <span style={{ fontWeight: 600, fontSize: 12 }}>{value}</span>
+        </div>
+    );
 }
 
-function PlayerTable({ players, onAction }: { players: any[]; onAction: (name: string, action: string, msg?: string) => void }) {
+function SquadBlock({ squad, members, onAction, onDisband, collapsed: forceCollapsed }: {
+    squad: any; members: any[]; onAction: (name: string, action: string, msg?: string) => void;
+    onDisband: (() => void) | null; collapsed?: boolean;
+}) {
+    const [collapsed, setCollapsed] = useState(forceCollapsed ?? (members.length > 8));
+    const leader = members.find((m: any) => m.is_leader);
+
     return (
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
-            <thead><tr style={{ borderBottom: '1px solid var(--border)' }}><th style={{ padding: '4px 6px', color: 'var(--text3)', fontWeight: 500, textAlign: 'left' }}>玩家</th><th style={{ padding: '4px 6px', color: 'var(--text3)', fontWeight: 500, textAlign: 'left' }}>职业</th><th style={{ padding: '4px 6px', color: 'var(--text3)', textAlign: 'center' }}>K</th><th style={{ padding: '4px 6px', color: 'var(--text3)', textAlign: 'center' }}>D</th><th style={{ padding: '4px 6px', color: 'var(--text3)', textAlign: 'left' }}>操作</th></tr></thead>
-            <tbody>{players.map((p: any) => (
-                <tr key={p.name + (p.steam_id || '')} style={{ borderBottom: '1px solid var(--border)' }}>
-                    <td style={{ padding: '4px 6px', fontWeight: 500 }}>{p.name}{p.is_admin && <span style={{ color: '#f59e0b', fontSize: 9, marginLeft: 4 }}>ADMIN</span>}</td>
-                    <td style={{ padding: '4px 6px', fontSize: 10, color: 'var(--text2)' }}>{p.role}</td>
-                    <td style={{ padding: '4px 6px', textAlign: 'center', color: '#22c55e' }}>{p.kills}</td>
-                    <td style={{ padding: '4px 6px', textAlign: 'center', color: 'var(--red)' }}>{p.deaths}</td>
-                    <td style={{ padding: '4px 6px' }}><div style={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-                        <span className="badge gray" style={{ cursor: 'pointer', fontSize: 9 }} onClick={() => onAction(p.name, 'warn')}>警告</span>
-                        <span className="badge red" style={{ cursor: 'pointer', fontSize: 9 }} onClick={() => { if (confirm(`踢出 ${p.name}?`)) onAction(p.name, 'kick', '管理员操作'); }}>踢出</span>
-                        <span className="badge red" style={{ cursor: 'pointer', fontSize: 9 }} onClick={() => { if (confirm(`封禁 ${p.name}?`)) onAction(p.name, 'ban', '管理员操作'); }}>封禁</span>
-                        <span className="badge" style={{ cursor: 'pointer', fontSize: 9, background: 'var(--blue)', color: '#fff' }} onClick={() => { if (confirm(`强制 ${p.name} 跳边?`)) onAction(p.name, 'team_change'); }}>跳边</span>
-                        <span className="badge" style={{ cursor: 'pointer', fontSize: 9, background: '#f59e0b', color: '#000' }} onClick={() => { if (confirm(`将 ${p.name} 踢出小队?`)) onAction(p.name, 'squad_remove'); }}>踢出小队</span>
-                    </div></td>
-                </tr>
-            ))}</tbody>
-        </table>
+        <div style={{ borderBottom: '1px solid var(--border)' }}>
+            <div
+                onClick={() => setCollapsed(!collapsed)}
+                style={{
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    padding: '8px 14px', background: 'var(--bg3)', cursor: 'pointer',
+                    userSelect: 'none', transition: 'background .1s',
+                    fontSize: 12,
+                }}
+                onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg4)'; }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'var(--bg3)'; }}
+            >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 10, color: 'var(--text3)', transition: 'transform .15s', transform: collapsed ? 'rotate(-90deg)' : 'rotate(0)' }}>▼</span>
+                    <strong>{squad.name}</strong>
+                    {leader && <span style={{ fontSize: 10, color: '#f59e0b' }}>👑 {leader.name}</span>}
+                </div>
+                <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                    <span style={{ fontSize: 10, color: 'var(--text3)' }}>{squad.creator || ''}</span>
+                    <span style={{ fontSize: 10, color: 'var(--text3)', background: 'var(--bg2)', padding: '1px 7px', borderRadius: 10 }}>{members.length}</span>
+                    {onDisband && (
+                        <span
+                            onClick={e => { e.stopPropagation(); onDisband(); }}
+                            style={{ fontSize: 10, cursor: 'pointer', color: 'var(--red)', padding: '2px 6px', borderRadius: 4, background: 'rgba(239,68,68,0.08)' }}
+                            title="解散小队"
+                        >解散</span>
+                    )}
+                </div>
+            </div>
+            {!collapsed && members.length > 0 && (
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+                    <thead>
+                        <tr style={{ background: 'var(--bg2)' }}>
+                            <th style={{ padding: '5px 14px', color: 'var(--text3)', fontWeight: 500, textAlign: 'left', fontSize: 10 }}>玩家</th>
+                            <th style={{ padding: '5px 6px', color: 'var(--text3)', fontWeight: 500, textAlign: 'left', fontSize: 10 }}>职业</th>
+                            <th style={{ padding: '5px 6px', color: 'var(--text3)', fontWeight: 500, textAlign: 'center', fontSize: 10 }}>K</th>
+                            <th style={{ padding: '5px 6px', color: 'var(--text3)', fontWeight: 500, textAlign: 'center', fontSize: 10 }}>D</th>
+                            <th style={{ padding: '5px 14px', color: 'var(--text3)', fontWeight: 500, textAlign: 'right', fontSize: 10 }}>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {members.map((p: any) => (
+                            <tr key={p.name + (p.steam_id || '')} style={{ borderBottom: '1px solid var(--border)', transition: 'background .1s' }}
+                                onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg3)'; }}
+                                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+                            >
+                                <td style={{ padding: '5px 14px' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                        <span style={{ fontWeight: 600, fontSize: 12 }}>{p.name}</span>
+                                        {p.is_admin && <span style={{ color: '#f59e0b', fontSize: 9 }}>⭐</span>}
+                                        {p.is_leader && <span style={{ color: '#f59e0b', fontSize: 9 }}>👑</span>}
+                                    </div>
+                                </td>
+                                <td style={{ padding: '5px 6px', color: 'var(--text2)', fontSize: 10 }}>{p.role}</td>
+                                <td style={{ padding: '5px 6px', textAlign: 'center', color: '#22c55e', fontWeight: 500 }}>{p.kills}</td>
+                                <td style={{ padding: '5px 6px', textAlign: 'center', color: 'var(--red)', fontWeight: 500 }}>{p.deaths}</td>
+                                <td style={{ padding: '5px 14px', textAlign: 'right' }}>
+                                    <div style={{ display: 'flex', gap: 3, justifyContent: 'flex-end' }}>
+                                        <ActionBtn color="var(--text2)" bg="var(--bg4)" onClick={() => onAction(p.name, 'warn')}>警告</ActionBtn>
+                                        <ActionBtn color="var(--red)" bg="rgba(239,68,68,0.08)" onClick={() => { if (confirm(`踢出 ${p.name}?`)) onAction(p.name, 'kick', '管理员操作'); }}>踢出</ActionBtn>
+                                        <ActionBtn color="var(--red)" bg="rgba(239,68,68,0.12)" onClick={() => { if (confirm(`封禁 ${p.name}?`)) onAction(p.name, 'ban', '管理员操作'); }}>封禁</ActionBtn>
+                                        <ActionBtn color="var(--blue)" bg="rgba(59,130,246,0.08)" onClick={() => { if (confirm(`强制 ${p.name} 跳边?`)) onAction(p.name, 'team_change'); }}>跳边</ActionBtn>
+                                    </div>
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            )}
+        </div>
+    );
+}
+
+function ActionBtn({ children, onClick, color, bg }: { children: string; onClick: () => void; color: string; bg: string }) {
+    const [hover, setHover] = useState(false);
+    return (
+        <span
+            onClick={onClick}
+            onMouseEnter={() => setHover(true)}
+            onMouseLeave={() => setHover(false)}
+            style={{
+                cursor: 'pointer', fontSize: 9, fontWeight: 600,
+                padding: '3px 7px', borderRadius: 4,
+                background: hover ? color : bg,
+                color: hover ? '#fff' : color,
+                transition: 'all .12s', whiteSpace: 'nowrap',
+                border: `1px solid ${hover ? color : 'transparent'}`,
+            }}
+        >{children}</span>
     );
 }
 
 function Modal({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
-    return <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={e => { if (e.target === e.currentTarget) onClose(); }}><div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: 24, width: 440, maxWidth: '90vw' }} onClick={e => e.stopPropagation()}>{children}</div></div>;
+    return (
+        <div
+            style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, backdropFilter: 'blur(4px)' }}
+            onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+        >
+            <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 12, padding: 24, width: 460, maxWidth: '90vw', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }} onClick={e => e.stopPropagation()}>
+                {children}
+            </div>
+        </div>
+    );
 }
