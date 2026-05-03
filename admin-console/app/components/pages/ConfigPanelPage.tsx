@@ -76,7 +76,11 @@ export default function ConfigPanelPage() {
   const [damageNotifyLoading, setDamageNotifyLoading] = useState(false);
   const [damageNotifySaving, setDamageNotifySaving] = useState(false);
   const [damageNotifyError, setDamageNotifyError] = useState('');
-  const [damageNotifyForm, setDamageNotifyForm] = useState({ enabled: false, keyword: '!damage' });
+  const [damageNotifyForm, setDamageNotifyForm] = useState({
+    enabled: false, keyword: '!damage',
+    min_damage: 20, notify_tk: true, notify_damage: false,
+    notify_high_damage: true, high_damage_threshold: 80,
+  });
   // Abnormal damage state
   const [abDamageLoading, setAbDamageLoading] = useState(false);
   const [abDamageSaving, setAbDamageSaving] = useState(false);
@@ -144,7 +148,7 @@ export default function ConfigPanelPage() {
     // 加载伤害通知设置
     setDamageNotifyLoading(true);
     api(`/servers/${selectedServerId}/damage-notify-settings`).then(r => r.json())
-      .then(d => { setDamageNotifyForm({ enabled: d.enabled, keyword: d.keyword || '!damage' }); setDamageNotifyLoading(false); })
+      .then(d => { setDamageNotifyForm({ enabled: d.enabled, keyword: d.keyword || '!damage', min_damage: d.min_damage ?? 20, notify_tk: d.notify_tk ?? true, notify_damage: d.notify_damage ?? false, notify_high_damage: d.notify_high_damage ?? true, high_damage_threshold: d.high_damage_threshold ?? 80 }); setDamageNotifyLoading(false); })
       .catch(() => setDamageNotifyLoading(false));
     // 加载异常伤害设置
     setAbDamageLoading(true);
@@ -564,29 +568,93 @@ export default function ConfigPanelPage() {
         )}
         {activeTab === 'tab-9' && (
           <div className="tab-content" style={{ display: 'block' }}>
-            <h4 style={{ marginBottom: 20 }}>伤害通知</h4>
+            <h4 style={{ marginBottom: 20 }}>伤害 / TK 通知</h4>
             {!selectedServerId ? (
               <p style={{ color: 'var(--text3)', fontSize: 12 }}>请先添加游戏服务器。</p>
             ) : damageNotifyLoading ? (
               <p style={{ color: 'var(--text3)', fontSize: 12 }}>加载中...</p>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 24, maxWidth: 500 }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}>
-                  <input type="checkbox" checked={damageNotifyForm.enabled} onChange={e => setDamageNotifyForm({...damageNotifyForm, enabled: e.target.checked})} />
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 20, maxWidth: 520 }}>
+                {/* 总开关 */}
+                <label style={{ display: 'flex', alignItems: 'flex-start', gap: 12, cursor: 'pointer', padding: 14, background: 'var(--bg3)', borderRadius: 8, border: '1px solid var(--border)' }}>
+                  <input type="checkbox" checked={damageNotifyForm.enabled} onChange={e => setDamageNotifyForm({ ...damageNotifyForm, enabled: e.target.checked })} style={{ marginTop: 2 }} />
                   <div>
-                    <div style={{ fontWeight: 500 }}>开启伤害通知功能</div>
-                    <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>开启后，玩家可通过关键字查询 HUD 伤害通知</div>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>启用伤害通知服务</div>
+                    <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4, lineHeight: 1.5 }}>
+                      开启后，游戏内的伤害和 TK 事件将通过 AdminBroadcast 实时广播到聊天框
+                    </div>
                   </div>
                 </label>
 
-                <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16 }}>
-                  <label style={{ fontSize: 12, color: 'var(--text2)', display: 'block', marginBottom: 6 }}>玩家触发关键字</label>
+                <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16 }} />
+
+                {/* TK 通知 */}
+                <div style={{ padding: '12px 14px', background: 'rgba(239,68,68,0.05)', borderRadius: 8, border: '1px solid rgba(239,68,68,0.15)' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}>
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: 13 }}>💀 误杀 (TK) 通知</div>
+                      <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>任何友军伤害事件都会广播</div>
+                    </div>
+                    <input type="checkbox" checked={damageNotifyForm.notify_tk}
+                      onChange={e => setDamageNotifyForm({ ...damageNotifyForm, notify_tk: e.target.checked })}
+                      disabled={!damageNotifyForm.enabled} />
+                  </label>
+                </div>
+
+                {/* 击杀通知 */}
+                <div style={{ padding: '12px 14px', background: 'var(--bg3)', borderRadius: 8, border: '1px solid var(--border)' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}>
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: 13 }}>💥 高伤害击杀通知</div>
+                      <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>对敌方造成一击必杀（伤害 ≥ 阈值）时广播</div>
+                    </div>
+                    <input type="checkbox" checked={damageNotifyForm.notify_high_damage}
+                      onChange={e => setDamageNotifyForm({ ...damageNotifyForm, notify_high_damage: e.target.checked })}
+                      disabled={!damageNotifyForm.enabled} />
+                  </label>
+                  {damageNotifyForm.notify_high_damage && (
+                    <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span style={{ fontSize: 12, color: 'var(--text3)' }}>阈值：</span>
+                      <input type="number" className="rcon-input" style={{ width: 80, textAlign: 'center' }}
+                        value={damageNotifyForm.high_damage_threshold}
+                        onChange={e => setDamageNotifyForm({ ...damageNotifyForm, high_damage_threshold: parseInt(e.target.value) || 0 })}
+                        disabled={!damageNotifyForm.enabled} />
+                      <span style={{ fontSize: 12, color: 'var(--text3)' }}>伤害值</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* 普通伤害通知 */}
+                <div style={{ padding: '12px 14px', background: 'var(--bg3)', borderRadius: 8, border: '1px solid var(--border)' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}>
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: 13 }}>🔫 普通伤害通知</div>
+                      <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>非 TK 伤害超过阈值时广播（⚠️ 可能大量刷屏）</div>
+                    </div>
+                    <input type="checkbox" checked={damageNotifyForm.notify_damage}
+                      onChange={e => setDamageNotifyForm({ ...damageNotifyForm, notify_damage: e.target.checked })}
+                      disabled={!damageNotifyForm.enabled} />
+                  </label>
+                  {damageNotifyForm.notify_damage && (
+                    <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span style={{ fontSize: 12, color: 'var(--text3)' }}>最低伤害：</span>
+                      <input type="number" className="rcon-input" style={{ width: 80, textAlign: 'center' }}
+                        value={damageNotifyForm.min_damage}
+                        onChange={e => setDamageNotifyForm({ ...damageNotifyForm, min_damage: parseInt(e.target.value) || 0 })}
+                        disabled={!damageNotifyForm.enabled} />
+                      <span style={{ fontSize: 12, color: 'var(--text3)' }}>伤害值</span>
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16 }} />
+
+                {/* 关键字（暂保留） */}
+                <div>
+                  <label style={{ fontSize: 12, color: 'var(--text2)', display: 'block', marginBottom: 6 }}>玩家触发关键字（HUD 查询，预留功能）</label>
                   <input className="rcon-input" style={{ width: 200 }} value={damageNotifyForm.keyword}
-                    onChange={e => setDamageNotifyForm({...damageNotifyForm, keyword: e.target.value})}
+                    onChange={e => setDamageNotifyForm({ ...damageNotifyForm, keyword: e.target.value })}
                     placeholder="!damage" />
-                  <p style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
-                    玩家在聊天中发送此关键字即可开启伤害通知。{!damageNotifyForm.enabled && <span style={{ color: 'var(--red)' }}>当前功能已关闭，关键字不会生效。</span>}
-                  </p>
                 </div>
 
                 {damageNotifyError && <div style={{ color: 'var(--red)', fontSize: 12 }}>{damageNotifyError}</div>}

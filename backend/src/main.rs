@@ -28,6 +28,7 @@ async fn main() -> anyhow::Result<()> {
     let log_tx = agent_pool.log_tx();
     let log_rx1 = log_tx.subscribe();
     let log_rx2 = log_tx.subscribe();
+    let log_rx3 = log_tx.subscribe();
 
     // 初始化默认管理员
     init_admin(&pool, &config).await?;
@@ -44,7 +45,9 @@ async fn main() -> anyhow::Result<()> {
     // 启动误杀检测服务
     services::tk_service::start_tk_monitor(pool.clone(), log_rx1);
     // 启动广播处理服务
-    services::broadcast_handler::start_broadcast_handler(pool, log_rx2);
+    services::broadcast_handler::start_broadcast_handler(pool.clone(), log_rx2);
+    // 启动伤害/TK通知服务
+    services::damage_notify_service::start_damage_notify(pool, log_rx3);
 
     let cors = if config.allowed_origin == "*" {
         CorsLayer::new()
