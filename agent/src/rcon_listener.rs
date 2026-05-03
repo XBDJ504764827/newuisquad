@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::{Duration, Instant};
@@ -33,25 +34,47 @@ pub fn start_rcon_listener(
             eprintln!("[RCON] 已连接");
             let mut buf = [0u8; 65536];
             let mut partial: Vec<u8> = Vec::new();
-            let mut last_query = Instant::now();
-            // 累积状态查询结果
-            let mut players_raw = String::new();
-            let mut squads_raw = String::new();
-            let mut map_raw = String::new();
-            let mut next_map = String::new();
-            let mut server_name = String::new();
-            let mut player_count = 0i32;
-            let mut max_players = 0i32;
-            let mut game_mode = String::new();
+            // 设为 3 秒前，让首次状态查询立即执行
+            let mut last_query = Instant::now() - Duration::from_secs(3);
+            // RCON 命令 ID 计数器（每个命令唯一 ID）
+            let mut cmd_id: i32 = 100;
+            // 按 ID 累积响应: id → (type, data)
+            let mut pending: HashMap<i32, (String, String)> = HashMap::new();
+            // 已完成的查询结果
+            let mut players_data = String::new();
+            let mut squads_data = String::new();
+            let mut map_data = String::new();
+            let mut server_info_json = String::new();
 
             loop {
                 // 每 3 秒查询状态
                 if last_query.elapsed().as_secs() >= 3 {
-                    // 主动上报累积的查询结果（不依赖外来事件触发）
-                    if !players_raw.is_empty() {
-                        let players = parse_players(&players_raw);
-                        let squads = parse_squads(&squads_raw);
-                        let mut team_names = parse_team_names(&squads_raw);
+                    // 将 pending 中已完成的响应转移到对应的数据区
+                    let mut new_players = String::new();
+                    let mut new_squads = String::new();
+                    let mut new_map = String::new();
+                    let mut new_info = String::new();
+                    for (_id, (typ, data)) in pending.drain() {
+                        if data.is_empty() { continue; }
+                        match typ.as_str() {
+                            "players" => { new_players = data; }
+                            "squads" => { new_squads = data; }
+                            "map" => { new_map = data; }
+                            "info" => { new_info = data; }
+                            _ => {}
+                        }
+                    }
+                    // 保留最新数据
+                    if !new_players.is_empty() { players_data = new_players; }
+                    if !new_squads.is_empty() { squads_data = new_squads; }
+                    if !new_map.is_empty() { map_data = new_map; }
+                    if !new_info.is_empty() { server_info_json = new_info; }
+
+                    // 处理所有已完成的累积响应
+                    if !players_data.is_empty() || !squads_data.is_empty() || !map_data.is_empty() || !server_info_json.is_empty() {
+                        let players = parse_players(&players_data);
+                        let squads = parse_squads(&squads_data);
+                        let mut team_names = parse_team_names(&squads_data);
                         if team_names.is_empty() {
                             let mut seen = std::collections::HashSet::new();
                             for p in &players {
@@ -60,25 +83,46 @@ pub fn start_rcon_listener(
                                 }
                             }
                         }
-                        let map = map_raw.lines().next().unwrap_or("").to_string();
+                        // 从累积的地图数据和 server_info_json 中提取信息
+                        let mut map_name = String::new();
+                        let mut next_map_name = String::new();
+                        let mut server_name = String::new();
+                        let mut player_count = 0i32;
+                        let mut max_players = 0i32;
+                        let mut game_mode = String::new();
+                        // 合并所有地图相关数据一起解析
+                        let all_map_data = format!("{}\n{}", map_data, server_info_json);
+                        parse_map_info(&all_map_data, &mut map_name, &mut next_map_name, &mut server_name, &mut player_count, &mut max_players, &mut game_mode);
                         let actual_player_count = player_count.max(players.len() as i32);
-                        eprintln!("[RCON] 上报: {}人/{}队 阵营{:?} 地图{}", players.len(), squads.len(), team_names.iter().map(|t|&t.faction).collect::<Vec<_>>(), map);
+                        eprintln!("[RCON] 上报: {}人/{}队 阵营{:?} 地图{}", players.len(), squads.len(), team_names.iter().map(|t|&t.faction).collect::<Vec<_>>(), map_name);
                         if !players.is_empty() {
                             let _ = msg_tx.send(AgentMessage::ServerStateReport {
                                 players, squads, team_names,
-                                map_name: map, game_mode: game_mode.clone(),
-                                server_name: server_name.clone(), player_count: actual_player_count, max_players,
-                                next_map: next_map.clone(),
+                                map_name, game_mode,
+                                server_name, player_count: actual_player_count, max_players,
+                                next_map: next_map_name,
                             });
                         }
                     }
-                    players_raw.clear(); squads_raw.clear(); map_raw.clear(); next_map.clear();
-                    server_name.clear(); player_count = 0; max_players = 0; game_mode.clear();
-                    let _ = s.write_all(&build(2, 50, "ListPlayers"));
-                    let _ = s.write_all(&build(2, 51, "ListSquads"));
-                    let _ = s.write_all(&build(2, 52, "ShowServerInfo"));
-                    let _ = s.write_all(&build(2, 53, "ShowNextMap"));
-                    let _ = s.write_all(&build(2, 54, "ShowCurrentMap"));
+                    players_data.clear(); squads_data.clear(); map_data.clear(); server_info_json.clear();
+                    pending.clear();
+
+                    // 发送新一轮查询（每个命令用唯一 ID）
+                    cmd_id += 1; let pid_players = cmd_id;
+                    cmd_id += 1; let pid_squads = cmd_id;
+                    cmd_id += 1; let pid_info = cmd_id;
+                    cmd_id += 1; let pid_next = cmd_id;
+                    cmd_id += 1; let pid_cur = cmd_id;
+                    let _ = s.write_all(&build(2, pid_players, "ListPlayers"));
+                    let _ = s.write_all(&build(2, pid_squads, "ListSquads"));
+                    let _ = s.write_all(&build(2, pid_info, "ShowServerInfo"));
+                    let _ = s.write_all(&build(2, pid_next, "ShowNextMap"));
+                    let _ = s.write_all(&build(2, pid_cur, "ShowCurrentMap"));
+                    pending.insert(pid_players, ("players".into(), String::new()));
+                    pending.insert(pid_squads, ("squads".into(), String::new()));
+                    pending.insert(pid_info, ("info".into(), String::new()));
+                    pending.insert(pid_next, ("map".into(), String::new()));
+                    pending.insert(pid_cur, ("map".into(), String::new()));
                     last_query = Instant::now();
                 }
 
@@ -112,85 +156,23 @@ pub fn start_rcon_listener(
                             let Some(body) = body_str(&pkt) else { continue };
                             if body.is_empty() { continue; }
 
-                            // ===== 状态查询响应（按内容前缀识别） =====
-                            if body.starts_with("----- Active Players -----") {
-                                let id = pkt_id(&pkt).unwrap_or(0);
-                                players_raw = read_multi(&body, &mut partial, id);
-                                eprintln!("[RCON] 玩家数据: {} 字节", players_raw.len());
-                                continue;
-                            }
-                            if body.starts_with("----- Active Squads -----") {
-                                let id = pkt_id(&pkt).unwrap_or(0);
-                                squads_raw = read_multi(&body, &mut partial, id);
-                                let preview: String = squads_raw.chars().take(100).collect();
-                                eprintln!("[RCON] 小队数据: {} 字节, 前100: {:?}", squads_raw.len(), preview);
-                                continue;
-                            }
-                            if body.contains("Current map is ") || body.contains("Current map:") || body.contains("Current level is ") || body.contains("Next map is ")
-                                || body.contains("Map: ") || body.contains("Next Map: ") || body.contains("Server Name:")
-                                || body.contains("Server name:") || body.contains("Game Mode:") || body.contains("Game mode:")
-                                || body.contains("Player count:") || body.contains("Max players:")
-                                || body.contains("layer is ") || body.contains("factions ") {
-                                // 解析当前地图和下一张地图（兼容多种格式）
-                                for line in body.lines() {
-                                    let line = line.trim();
-                                    // 格式1: "Current map is Narva_RAAS_v1, Next map is ..."
-                                    if let Some(v) = line.strip_prefix("Current map is ") {
-                                        map_raw = v.split(',').next().unwrap_or(v).trim().to_string();
+                            // 按 packet ID 路由响应到对应的累积器
+                            let pid = pkt_id(&pkt).unwrap_or(0);
+                            if pid != 0 {
+                                if let Some((ref _typ, ref mut acc)) = pending.get_mut(&pid) {
+                                    acc.push_str(&body);
+                                    // 标注类型方便调试
+                                    if body.starts_with("----- Active Players -----") {
+                                        eprintln!("[RCON] 玩家响应开始，ID={}", pid);
                                     }
-                                    if let Some(v) = line.strip_prefix("Next map is ") {
-                                        next_map = v.split(',').next().unwrap_or(v).trim().to_string();
+                                    if body.starts_with("----- Active Squads -----") {
+                                        eprintln!("[RCON] 小队响应开始，ID={}", pid);
                                     }
-                                    // 兼容 "Current map is X, Next map is Y" 格式
-                                    if line.contains(", Next map is ") {
-                                        if let Some(pos) = line.find(", Next map is ") {
-                                            next_map = line[pos + 14..].split(',').next().unwrap_or("").trim().to_string();
-                                        }
-                                    }
-                                    // 格式2 (ShowNextMap): "Current map: X" / "Next map: Y"
-                                    if let Some(v) = line.strip_prefix("Current map: ") {
-                                        map_raw = v.split(',').next().unwrap_or(v).trim().to_string();
-                                    }
-                                    if let Some(v) = line.strip_prefix("Next map: ") {
-                                        next_map = v.split(',').next().unwrap_or(v).trim().to_string();
-                                    }
-                                    // 格式3 (ShowServerInfo): "Map: Narva_RAAS_v1"
-                                    if let Some(v) = line.strip_prefix("Map: ") {
-                                        if map_raw.is_empty() { map_raw = v.to_string(); }
-                                    }
-                                    if let Some(v) = line.strip_prefix("Next Map: ") {
-                                        if next_map.is_empty() { next_map = v.to_string(); }
-                                    }
-                                    // 格式4 (ShowCurrentMap): "Current level is Narva, layer is Narva_Invasion_v1, factions ..."
-                                    if let Some(v) = line.strip_prefix("layer is ") {
-                                        map_raw = v.split(',').next().unwrap_or(v).trim().to_string();
-                                    }
-                                    if let Some(v) = line.strip_prefix("Current level is ") {
-                                        // 作为兜底，仅在 map_raw 为空时使用
-                                        if map_raw.is_empty() { map_raw = v.split(',').next().unwrap_or(v).trim().to_string(); }
-                                    }
-                                    // 解析 ShowServerInfo 附加字段
-                                    if let Some(v) = line.strip_prefix("Server name: ") {
-                                        server_name = v.to_string();
-                                    }
-                                    if let Some(v) = line.strip_prefix("Server Name: ") {
-                                        if server_name.is_empty() { server_name = v.to_string(); }
-                                    }
-                                    if let Some(v) = line.strip_prefix("Player count: ") {
-                                        player_count = v.trim().parse().unwrap_or(0);
-                                    }
-                                    if let Some(v) = line.strip_prefix("Max players: ") {
-                                        max_players = v.trim().parse().unwrap_or(0);
-                                    }
-                                    if let Some(v) = line.strip_prefix("Game mode: ") {
-                                        game_mode = v.to_string();
-                                    }
-                                    if let Some(v) = line.strip_prefix("Game Mode: ") {
-                                        if game_mode.is_empty() { game_mode = v.to_string(); }
-                                    }
+                                    continue;
                                 }
-                                eprintln!("[RCON] 地图数据: current={:?} next={:?}", map_raw, next_map);
                             }
+
+                            // 非查询命令的响应（聊天、玩家加入/离开等实时事件）
 
                             // ===== 聊天 =====
                             if let Some(ev) = chat_event(&body) {
@@ -241,9 +223,9 @@ pub fn start_rcon_listener(
                                 }});
                             }
 
-                            // ===== 诊断：打印所有未被其他 handler 匹配的 body（前 500 字符）=====
-                            if body.len() > 10 && !body.contains("-----") && !body.contains("Current map is") && !body.contains("Current level is") && !body.contains("Next map is") && !body.contains("Map:") && !body.contains("Server Name:") && !body.contains("Server name:") && !body.contains("Game Mode:") && !body.contains("Game mode:") && !body.contains("Players:") && !body.contains("Player count:") && !body.contains("Max players:") && !body.contains("layer is") && !body.contains("factions") && !body.starts_with("Message broadcasted") {
-                                let preview: &str = &body[..body.len().min(500)];
+                            // ===== 未匹配包：仅对长度为 5-200 的非系统包做诊断 =====
+                            if body.len() > 5 && body.len() < 200 && !body.contains("-----") && !body.contains("Online IDs:") && !body.starts_with("{") {
+                                let preview: &str = &body[..body.len().min(150)];
                                 eprintln!("[RCON] 未匹配: {:?}", preview);
                             }
                         }
@@ -257,26 +239,110 @@ pub fn start_rcon_listener(
     });
 }
 
-// === 读取多包（同 packet ID 继续，不同 ID 停止；空包可能是段间分隔符，跳过） ===
-fn read_multi(first: &str, partial: &mut Vec<u8>, first_pkt_id: i32) -> String {
-    let mut out = first.to_string();
-    while let Some((p2, r2)) = extract(partial) {
-        // 检查 packet ID：不同 ID 说明是下一个命令的响应，停止消费
-        if let Some(next_id) = pkt_id(&p2) {
-            if next_id != first_pkt_id {
-                break;
+/// 从 ShowCurrentMap / ShowNextMap / ShowServerInfo 的累积响应中提取地图信息
+fn parse_map_info(data: &str, map_name: &mut String, next_map: &mut String, server_name: &mut String, player_count: &mut i32, max_players: &mut i32, game_mode: &mut String) {
+    for line in data.lines() {
+        let line = line.trim();
+        // ShowCurrentMap / ShowNextMap 格式
+        if let Some(v) = line.strip_prefix("Current map is ") {
+            *map_name = v.split(',').next().unwrap_or(v).trim().to_string();
+        }
+        if let Some(v) = line.strip_prefix("Next map is ") {
+            *next_map = v.split(',').next().unwrap_or(v).trim().to_string();
+        }
+        if line.contains(", Next map is ") {
+            if let Some(pos) = line.find(", Next map is ") {
+                *next_map = line[pos + 14..].split(',').next().unwrap_or("").trim().to_string();
             }
         }
-        *partial = r2;
-        if let Some(b2) = body_str(&p2) {
-            if b2.is_empty() {
-                // 同 ID 空包：可能是 Active/RecentlyDisconnected 之间的分隔符，跳过继续读
-                continue;
+        if let Some(v) = line.strip_prefix("Current map: ") {
+            *map_name = v.split(',').next().unwrap_or(v).trim().to_string();
+        }
+        if let Some(v) = line.strip_prefix("Next map: ") {
+            *next_map = v.split(',').next().unwrap_or(v).trim().to_string();
+        }
+        if let Some(v) = line.strip_prefix("layer is ") {
+            *map_name = v.split(',').next().unwrap_or(v).trim().to_string();
+        }
+        if let Some(v) = line.strip_prefix("Current level is ") {
+            if map_name.is_empty() { *map_name = v.split(',').next().unwrap_or(v).trim().to_string(); }
+        }
+        // ShowServerInfo JSON 字段（虽为 JSON，但可能夹杂文本行）
+        if let Some(v) = line.strip_prefix("Map: ") {
+            if map_name.is_empty() { *map_name = v.to_string(); }
+        }
+        if let Some(v) = line.strip_prefix("Next Map: ") {
+            if next_map.is_empty() { *next_map = v.to_string(); }
+        }
+        if let Some(v) = line.strip_prefix("Server name: ") {
+            *server_name = v.to_string();
+        }
+        if let Some(v) = line.strip_prefix("Server Name: ") {
+            if server_name.is_empty() { *server_name = v.to_string(); }
+        }
+        if let Some(v) = line.strip_prefix("Player count: ") {
+            *player_count = v.trim().parse().unwrap_or(0);
+        }
+        if let Some(v) = line.strip_prefix("Max players: ") {
+            *max_players = v.trim().parse().unwrap_or(0);
+        }
+        if let Some(v) = line.strip_prefix("Game mode: ") {
+            *game_mode = v.to_string();
+        }
+        if let Some(v) = line.strip_prefix("Game Mode: ") {
+            if game_mode.is_empty() { *game_mode = v.to_string(); }
+        }
+        // ShowServerInfo JSON 中的字段
+        // 格式: "MapName_s":"Gorodok_Invasion_v1","ServerName_s":"name","GameMode_s":"mode"
+        // 提取 JSON 中 "key":"value" 的值部分
+        let extract_json_val = |data: &str, key: &str| -> Option<String> {
+            let search = format!("\"{}\":", key);
+            let pos = data.find(&search)?;
+            let rest = &data[pos + search.len()..];
+            let rest = rest.trim_start();
+            if rest.starts_with('"') {
+                // 字符串值: "value" → 找下一个无转义的 "
+                let inner = &rest[1..];
+                let mut chars = inner.chars();
+                let mut val = String::new();
+                loop {
+                    match chars.next() {
+                        Some('\\') => {
+                            val.push('\\');
+                            if let Some(c) = chars.next() { val.push(c); }
+                        }
+                        Some('"') => break,
+                        Some(c) => val.push(c),
+                        None => break,
+                    }
+                }
+                Some(val)
+            } else {
+                // 数字/布尔值: 123 → 找下一个 , 或 }
+                let end = rest.find(|c: char| c == ',' || c == '}').unwrap_or(rest.len());
+                Some(rest[..end].trim().to_string())
             }
-            out.push_str(&b2);
-        } else { break; }
+        };
+        if map_name.is_empty() {
+            if let Some(v) = extract_json_val(line, "MapName_s") { *map_name = v; }
+        }
+        if server_name.is_empty() {
+            if let Some(v) = extract_json_val(line, "ServerName_s") { *server_name = v; }
+        }
+        if game_mode.is_empty() {
+            if let Some(v) = extract_json_val(line, "GameMode_s") { *game_mode = v; }
+        }
+        if *player_count == 0 {
+            if let Some(v) = extract_json_val(line, "PlayerCount_I") {
+                *player_count = v.parse().unwrap_or(0);
+            }
+        }
+        if *max_players == 0 {
+            if let Some(v) = extract_json_val(line, "MaxPlayers") {
+                *max_players = v.parse().unwrap_or(0);
+            }
+        }
     }
-    out
 }
 
 // === RCON 协议 ===

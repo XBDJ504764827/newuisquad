@@ -100,6 +100,48 @@ pub enum ParsedEvent {
         damage_instigator: String,
         logged_at: NaiveDateTime,
     },
+    DeployableDamaged {
+        deployable: String,
+        damage: f64,
+        weapon: String,
+        player_suffix: String,
+        damage_type: String,
+        health_remaining: f64,
+        logged_at: NaiveDateTime,
+    },
+    PlayerDisconnected {
+        ip: String,
+        player_controller: String,
+        eos_id: String,
+        logged_at: NaiveDateTime,
+    },
+    RoundTickets {
+        team: String,
+        faction: String,
+        subfaction: String,
+        action: String, // "won" or "lost"
+        tickets: String,
+        layer: String,
+        level: String,
+        logged_at: NaiveDateTime,
+    },
+    RoundWinner {
+        winner: String,
+        layer: String,
+        logged_at: NaiveDateTime,
+    },
+    RoundEnded {
+        logged_at: NaiveDateTime,
+    },
+    TickRate {
+        tick_rate: f64,
+        logged_at: NaiveDateTime,
+    },
+    AdminBroadcast {
+        message: String,
+        from: String,
+        logged_at: NaiveDateTime,
+    },
 }
 
 /// 解析 Squad 日志行的时间戳 [2026.05.01-06.17.03:441]
@@ -564,6 +606,155 @@ pub fn parse_line(line: &str) -> Option<ParsedEvent> {
                     }
                 }
             }
+        }
+    }
+
+    // 19. 可部署物受损（FOB/HAB 被攻击）
+    // [2026.05.01-06.17.03:441][243]LogSquadTrace: [DedicatedServer]TakeDamage(): BP_FOBRadio_C_123: 50.0 damage attempt by causer BP_M249_C_456 instigator PC=PlayerName (Online IDs: EOS: xxx steam: xxx) with damage type Explosion_C health remaining 150.0
+    if line.contains("TakeDamage()") && line.contains("damage attempt by causer") {
+        let deployable = line.split("TakeDamage(): ").nth(1)
+            .and_then(|s| s.split(": ").next())
+            .unwrap_or("")
+            .to_string();
+        let damage = line.split(": ")
+            .nth(2)
+            .and_then(|s| s.split(|c: char| c == ' ').next())
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0.0);
+        let weapon = line.split("by causer ").nth(1)
+            .and_then(|s| s.split(&[' ', '_'][..]).next())
+            .unwrap_or("")
+            .to_string();
+        let player_suffix = line.split("instigator ").nth(1)
+            .and_then(|s| s.split(" with damage type").next())
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default();
+        let damage_type = line.split("damage type ").nth(1)
+            .and_then(|s| s.split(|c: char| c == '_' || c == ' ').next())
+            .unwrap_or("")
+            .to_string();
+        let health_remaining = line.split("health remaining ").nth(1)
+            .and_then(|s| s.split(|c: char| c == ' ' || c == '.' || c == ',').next())
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0.0);
+
+        if !deployable.is_empty() {
+            return Some(ParsedEvent::DeployableDamaged {
+                deployable, damage, weapon, player_suffix, damage_type, health_remaining,
+                logged_at: ts,
+            });
+        }
+    }
+
+    // 20. 玩家断线
+    // [2026.05.01-06.17.03:441][243]LogNet: UChannel::Close: Sending CloseBunch. ChIndex 1234. RemoteAddr: 1.2.3.4, PC: BP_PlayerController_C_1234567, UniqueId: RedpointEOS:00024fa80525424f8b0f58481ba85f51
+    if line.contains("UChannel::Close:") && line.contains("RemoteAddr:") {
+        let ip = line.split("RemoteAddr: ").nth(1)
+            .and_then(|s| s.split(|c: char| c == ',' || c == ' ').next())
+            .unwrap_or("")
+            .to_string();
+        let player_controller = line.split("PC: ").nth(1)
+            .and_then(|s| s.split(|c: char| c == ',' || c == ' ').next())
+            .unwrap_or("")
+            .to_string();
+        let eos_id = line.split("RedpointEOS:").nth(1)
+            .and_then(|s| s.split(|c: char| c == ' ' || c == ',' || c == ')' || c == ']').next())
+            .unwrap_or("")
+            .to_string();
+
+        if !eos_id.is_empty() {
+            return Some(ParsedEvent::PlayerDisconnected {
+                ip, player_controller, eos_id, logged_at: ts,
+            });
+        }
+    }
+
+    // 21. 回合票数结算
+    // [2026.05.01-06.17.03:441][243]LogSquadGameEvents: Display: Team 1, USA (USA) has won the match with 324 Tickets on layer Gorodok_RAAS (level Gorodok)!
+    if line.contains("has won the match") || line.contains("has lost the match") {
+        let team = line.split("Display: Team ").nth(1)
+            .and_then(|s| s.split(',').next())
+            .unwrap_or("")
+            .to_string();
+        let faction_parts: Vec<&str> = line.split("Display: Team ").nth(1)
+            .map(|s| s.split(&[',', ')', '(', 'h'][..]).collect::<Vec<_>>())
+            .unwrap_or_default();
+        let subfaction = faction_parts.get(1).map(|s| s.trim().to_string()).unwrap_or_default();
+        let faction = faction_parts.get(4).map(|s| s.trim().to_string()).unwrap_or_default();
+        let action = if line.contains("has won") { "won" } else { "lost" };
+        let tickets = line.split("with ").nth(1)
+            .and_then(|s| s.split(" Tickets").next())
+            .unwrap_or("")
+            .to_string();
+        let layer = line.split("on layer ").nth(1)
+            .and_then(|s| s.split(" (level").next())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let level = line.split("(level ").nth(1)
+            .and_then(|s| s.split(')').next())
+            .unwrap_or("")
+            .to_string();
+
+        return Some(ParsedEvent::RoundTickets {
+            team: team.to_string(),
+            faction,
+            subfaction,
+            action: action.to_string(),
+            tickets,
+            layer,
+            level,
+            logged_at: ts,
+        });
+    }
+
+    // 22. 回合胜者确定
+    // [2026.05.01-06.17.03:441][243]LogSquadTrace: [DedicatedServer]DetermineMatchWinner(): USA won on Gorodok_RAAS
+    if line.contains("DetermineMatchWinner()") {
+        let winner = line.split("DetermineMatchWinner(): ").nth(1)
+            .and_then(|s| s.split(" won on ").next())
+            .unwrap_or("")
+            .to_string();
+        let layer = line.split(" won on ").nth(1)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+
+        if !winner.is_empty() {
+            return Some(ParsedEvent::RoundWinner { winner, layer, logged_at: ts });
+        }
+    }
+
+    // 23. 回合结束（进入比分板）
+    // [2026.05.01-06.17.03:441][243]LogGameState: Match State Changed from InProgress to WaitingPostMatch
+    if line.contains("Match State Changed from InProgress to WaitingPostMatch") {
+        return Some(ParsedEvent::RoundEnded { logged_at: ts });
+    }
+
+    // 24. 服务器 Tick Rate
+    // [2026.05.01-06.17.03:441][243]LogSquad: USQGameState: Server Tick Rate: 30.0
+    if line.contains("Server Tick Rate:") {
+        let tick_rate = line.split("Server Tick Rate: ").nth(1)
+            .and_then(|s| s.split(|c: char| c == ' ' || c == '.' || c == ',').next())
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0.0);
+
+        return Some(ParsedEvent::TickRate { tick_rate, logged_at: ts });
+    }
+
+    // 25. 管理员广播消息（更精确的匹配）
+    // [2026.05.01-06.17.03:441][243]LogSquad: ADMIN COMMAND: Message broadcasted <消息内容> from PlayerName
+    if line.contains("Message broadcasted <") && line.contains("> from ") {
+        let message = if let Some(start) = line.find("Message broadcasted <") {
+            let rest = &line[start + 22..];
+            if let Some(end) = rest.find("> from ") {
+                rest[..end].to_string()
+            } else { String::new() }
+        } else { String::new() };
+        let from = line.split("> from ").nth(1).unwrap_or("").trim().to_string();
+
+        if !message.is_empty() || !from.is_empty() {
+            return Some(ParsedEvent::AdminBroadcast { message, from, logged_at: ts });
         }
     }
 

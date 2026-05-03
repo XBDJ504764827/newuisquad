@@ -59,23 +59,29 @@ impl TeamSwitchManager {
             .and_then(|s| s["players"].as_array())
             .map(|a| a.len())
             .unwrap_or(0);
-        let has_squadjs = state
-            .and_then(|s| s["squadjs_squads"].as_array())
-            .map(|a| !a.is_empty())
-            .unwrap_or(false);
-        tracing::info!(server_id, player = %player_name, has_state = state.is_some(), steam_id = %steam_id, is_admin, player_count, has_squadjs, "代码跳边: handle_tb");
+        tracing::info!(server_id, player = %player_name, has_state = state.is_some(), steam_id = %steam_id, is_admin, player_count, "代码跳边: handle_tb");
+
+        // state 完全缺失：Agent 尚未上报过状态
+        if state.is_none() {
+            return vec![format!(
+                "AdminBroadcast \"{} 发送了 tb，系统正在初始化（尚未收到服务器状态），请5秒后重试\"",
+                player_name
+            )];
+        }
+
+        // state 存在但找不到该玩家：可能刚加入，等待下一次状态刷新
+        if steam_id.is_empty() {
+            let name_hint: String = player_name.chars().take(20).collect();
+            tracing::warn!(server_id, player = %player_name, player_count, "代码跳边: 在服务器状态中找不到该玩家");
+            return vec![format!(
+                "AdminBroadcast \"{} 发送了 tb，但在当前玩家列表中未找到你，请等待3秒后重试\"",
+                name_hint
+            )];
+        }
 
         // 管理员自己跳边直接进入认领阶段
         if is_admin {
             return self.promote_to_leader_claim(server_id, player_name, &steam_id, state);
-        }
-
-        // 如果 steam_id 为空（没找到玩家或 state 为 None），仍广播提示
-        if steam_id.is_empty() {
-            return vec![format!(
-                "AdminBroadcast \"{} 发送了 tb，但系统暂未获取到服务器状态，请稍后再试\"",
-                player_name
-            )];
         }
 
         // 检查是否已有未完成的请求
@@ -294,16 +300,45 @@ impl TeamSwitchManager {
     // ====== 从 state 中提取玩家 steam_id 和 is_admin ======
     fn extract_player_info<'a>(&self, player_name: &str, state: Option<&'a serde_json::Value>) -> (String, bool) {
         match state {
-            Some(s) => s["players"].as_array()
-                .and_then(|players| {
-                    players.iter()
-                        .find(|p| p["name"].as_str() == Some(player_name))
-                        .map(|p| (
-                            p["steam_id"].as_str().unwrap_or("").to_string(),
-                            p["is_admin"].as_bool().unwrap_or(false),
-                        ))
-                })
-                .unwrap_or_default(),
+            Some(s) => {
+                let players = s["players"].as_array();
+                let Some(players) = players else { return (String::new(), false) };
+
+                // 1. 精确匹配
+                if let Some(p) = players.iter().find(|p| p["name"].as_str() == Some(player_name)) {
+                    return (
+                        p["steam_id"].as_str().unwrap_or("").to_string(),
+                        p["is_admin"].as_bool().unwrap_or(false),
+                    );
+                }
+
+                // 2. 大小写不敏感匹配
+                let lower = player_name.to_lowercase();
+                if let Some(p) = players.iter().find(|p| {
+                    p["name"].as_str().map(|n| n.to_lowercase() == lower).unwrap_or(false)
+                }) {
+                    tracing::info!(original = %player_name, matched = %p["name"].as_str().unwrap_or("?"), "代码跳边: 大小写匹配");
+                    return (
+                        p["steam_id"].as_str().unwrap_or("").to_string(),
+                        p["is_admin"].as_bool().unwrap_or(false),
+                    );
+                }
+
+                // 3. 模糊匹配（名字包含）
+                if let Some(p) = players.iter().find(|p| {
+                    p["name"].as_str().map(|n| {
+                        n.to_lowercase().contains(&lower) || lower.contains(&n.to_lowercase())
+                    }).unwrap_or(false)
+                }) {
+                    tracing::info!(original = %player_name, matched = %p["name"].as_str().unwrap_or("?"), "代码跳边: 模糊匹配");
+                    return (
+                        p["steam_id"].as_str().unwrap_or("").to_string(),
+                        p["is_admin"].as_bool().unwrap_or(false),
+                    );
+                }
+
+                (String::new(), false)
+            }
             None => (String::new(), false),
         }
     }

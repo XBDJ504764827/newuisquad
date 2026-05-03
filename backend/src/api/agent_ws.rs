@@ -204,6 +204,30 @@ async fn handle_socket(
                                         ParsedEvent::ExplosionEvent { pos_x, pos_y, pos_z, damage_causer, damage_instigator, logged_at } => {
                                             let _ = sqlx::query("INSERT INTO explosion_events (server_id, pos_x, pos_y, pos_z, damage_causer, damage_instigator, logged_at) VALUES ($1,$2,$3,$4,$5,$6,$7)").bind(sid).bind(pos_x).bind(pos_y).bind(pos_z).bind(&damage_causer).bind(&damage_instigator).bind(logged_at).execute(&pool).await;
                                         }
+                                        ParsedEvent::DeployableDamaged { deployable, damage, weapon, player_suffix, damage_type, health_remaining, logged_at } => {
+                                            let _ = sqlx::query("INSERT INTO deployable_damaged_events (server_id, deployable, damage, weapon, player_suffix, damage_type, health_remaining, logged_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)").bind(sid).bind(&deployable).bind(damage).bind(&weapon).bind(&player_suffix).bind(&damage_type).bind(health_remaining).bind(logged_at).execute(&pool).await;
+                                        }
+                                        ParsedEvent::PlayerDisconnected { eos_id, logged_at, .. } => {
+                                            let _ = sqlx::query("UPDATE player_info SET last_seen = $3 WHERE server_id = $1 AND eos_id = $2").bind(sid).bind(&eos_id).bind(logged_at).execute(&pool).await;
+                                        }
+                                        ParsedEvent::RoundTickets { team: _, faction, subfaction, action, tickets, layer, level, logged_at } => {
+                                            let winner_team: Option<i32> = if action == "won" { Some(1) } else { None };
+                                            let label = format!("team:{} faction:{} sub:{} tickets:{}", action, faction, subfaction, tickets);
+                                            let _ = sqlx::query("INSERT INTO match_info (server_id, map_name, layer_name, team1_faction, team2_faction, winner_team, event_type, logged_at) VALUES ($1,$2,$3,$4,'',$5,$6,$7)").bind(sid).bind(&level).bind(&layer).bind(&label).bind(winner_team).bind("round_tickets").bind(logged_at).execute(&pool).await;
+                                        }
+                                        ParsedEvent::RoundWinner { winner, layer, logged_at } => {
+                                            let winner_team: Option<i32> = if winner.contains("1") { Some(1) } else if winner.contains("2") { Some(2) } else { None };
+                                            let _ = sqlx::query("INSERT INTO match_info (server_id, map_name, layer_name, team1_faction, team2_faction, winner_team, event_type, logged_at) VALUES ($1,'',$2,'','',$3,$4,$5)").bind(sid).bind(&layer).bind(winner_team).bind("round_winner").bind(logged_at).execute(&pool).await;
+                                        }
+                                        ParsedEvent::RoundEnded { logged_at } => {
+                                            let _ = sqlx::query("INSERT INTO match_info (server_id, map_name, layer_name, team1_faction, team2_faction, winner_team, event_type, logged_at) VALUES ($1,'','','','',NULL,'round_ended',$2)").bind(sid).bind(logged_at).execute(&pool).await;
+                                        }
+                                        ParsedEvent::TickRate { tick_rate, logged_at } => {
+                                            let _ = sqlx::query("INSERT INTO tick_rate_events (server_id, tick_rate, logged_at) VALUES ($1,$2,$3)").bind(sid).bind(tick_rate).bind(logged_at).execute(&pool).await;
+                                        }
+                                        ParsedEvent::AdminBroadcast { message, from, logged_at } => {
+                                            let _ = sqlx::query("INSERT INTO admin_actions (server_id, admin_name, action_type, target, message, raw_line, logged_at) VALUES ($1,$2,'broadcast','',$3,'',$4)").bind(sid).bind(&from).bind(&message).bind(logged_at).execute(&pool).await;
+                                        }
                                         _ => {}
                                     }
                                 }
