@@ -11,6 +11,9 @@ use tokio::sync::{mpsc, Mutex};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // 安装 rustls 加密提供程序（wss:// 必需）
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     // 从 exe 同目录加载 .env
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(exe_dir) = exe_path.parent() {
@@ -36,22 +39,24 @@ async fn main() -> anyhow::Result<()> {
     // Channel B: WebSocket(后端消息) → ws_client → file_ops
     let (to_agent_tx, to_agent_rx) = mpsc::unbounded_channel::<protocol::AgentMessage>();
 
-    // WebSocket 客户端（token 通过 X-Auth-Token 头传递，不再放在 URL query string 中）
+    // WebSocket 客户端（token 通过 URL query param 传递，兼容 tungstenite 自定义请求限制）
     let ws_tx = to_agent_tx.clone();
     let ws_rx = Arc::new(Mutex::new(to_ws_rx));
-    let ws_url = config.backend_ws_url.clone();
-    let ws_token = config.token.clone();
+    let ws_url = format!("{}?token={}", config.backend_ws_url, config.token);
     let ws_handle = tokio::spawn(async move {
-        ws_client::run(ws_url, ws_token, ws_tx, ws_rx).await;
+        ws_client::run(ws_url, ws_tx, ws_rx).await;
     });
 
-    // RCON 实时监听 → Channel A（聊天、事件）
+    // RCON 长连接 → Channel A（事件监听 + 状态查询 + 自动广播 + 欢迎消息）
     if !config.rcon_password.is_empty() {
         rcon_listener::start_rcon_listener(
             config.rcon_host.clone(),
             config.rcon_port,
             config.rcon_password.clone(),
             to_ws_tx.clone(),
+            config.auto_broadcast_interval_secs,
+            config.auto_broadcast_message.clone(),
+            config.welcome_message.clone(),
         );
     }
 

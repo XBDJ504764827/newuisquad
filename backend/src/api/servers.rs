@@ -50,6 +50,8 @@ pub async fn create(
 
     match result {
         Ok(row) => {
+            let admin_user = &req.admin_user;
+            crate::services::system_log::action_log(&state.pool, "servers", &format!("{} 添加服务器 {}", admin_user, req.name), &format!("IP: {}:{}", req.ip, req.rcon_port)).await;
             Ok(Json(serde_json::json!({
                 "id": row.get::<i32, _>(0),
                 "server_id": row.get::<String, _>(1),

@@ -38,6 +38,7 @@ async fn main() -> anyhow::Result<()> {
         agent_pool: Some(agent_pool),
         steam_api_key: config.steam_api_key.clone(),
         jwt_secret: config.jwt_secret.clone(),
+        server_states: Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
     };
 
     // 启动误杀检测服务

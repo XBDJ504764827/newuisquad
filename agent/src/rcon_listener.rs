@@ -1,252 +1,278 @@
 use std::io::{Read, Write};
 use std::net::TcpStream;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
-use crate::protocol::{AgentMessage, LogEntry};
+use crate::protocol::{AgentMessage, LogEntry, PlayerInfo, SquadInfo, TeamName};
 
-/// RCON 长连接监听 — SquadJS 兼容模式
-/// 保持连接持续读取服务器推送的事件（聊天、管理员镜头等）
 pub fn start_rcon_listener(
-    host: String,
-    port: u16,
-    password: String,
+    host: String, port: u16, password: String,
     msg_tx: mpsc::UnboundedSender<AgentMessage>,
+    auto_broadcast_secs: u64, auto_broadcast_msg: String, welcome_msg: String,
 ) {
     std::thread::spawn(move || {
         let addr = format!("{}:{}", host, port);
-        let parsed_addr = match addr.parse() {
-            Ok(a) => a,
-            Err(e) => {
-                eprintln!("[RCON] 地址解析失败 {}: {}", addr, e);
-                return;
-            }
-        };
-
-        eprintln!("[RCON] SquadJS 兼容模式 - 连接 {} (长连接)...", addr);
+        let parsed = match addr.parse() { Ok(a) => a, Err(_) => { eprintln!("[RCON] 地址错误: {}", addr); return; } };
+        let mut backoff = 1u64;
+        let mut last_bc = Instant::now();
 
         loop {
-            let mut stream = match TcpStream::connect_timeout(&parsed_addr, Duration::from_secs(10)) {
-                Ok(s) => {
-                    let _ = s.set_read_timeout(Some(Duration::from_secs(300)));
-                    s
-                }
-                Err(e) => {
-                    eprintln!("[RCON] 连接失败: {}，5秒后重试", e);
-                    std::thread::sleep(Duration::from_secs(5));
-                    continue;
-                }
+            let mut s = match TcpStream::connect_timeout(&parsed, Duration::from_secs(10)) {
+                Ok(s) => { s.set_read_timeout(Some(Duration::from_secs(60))).ok(); s.set_write_timeout(Some(Duration::from_secs(10))).ok(); s }
+                Err(_) => { std::thread::sleep(Duration::from_secs(backoff)); backoff = (backoff*2).min(60); continue; }
             };
 
-            // 认证 (type=3 SERVERDATA_AUTH)
-            let auth = build_packet(3, 0, &password);
-            if stream.write_all(&auth).is_err() {
-                eprintln!("[RCON] 认证发送失败");
-                std::thread::sleep(Duration::from_secs(5));
-                continue;
+            // 认证
+            if s.write_all(&build(3, 0, &password)).is_err() { sleep(5); continue; }
+            let mut rb = [0u8; 4096];
+            if s.read(&mut rb).map_or(true, |n| n < 14 || i32::from_le_bytes([rb[4],rb[5],rb[6],rb[7]]) == -1) {
+                sleep(5); continue;
             }
 
-            // 读取认证响应
-            let mut resp_buf = [0u8; 4096];
-            let auth_ok = match stream.read(&mut resp_buf) {
-                Ok(n) => {
-                    if let Some(body) = parse_packet_body(&resp_buf[..n]) {
-                        // 认证失败时服务器返回 ID=-1
-                        !body.is_empty() || n > 14
-                    } else {
-                        true // 假设成功
-                    }
-                }
-                Err(_) => false,
-            };
-
-            if !auth_ok {
-                eprintln!("[RCON] 认证失败，5秒后重试");
-                std::thread::sleep(Duration::from_secs(5));
-                continue;
-            }
-
-            eprintln!("[RCON] 已连接并认证成功，开始监听事件...");
-
+            backoff = 1;
+            eprintln!("[RCON] 已连接");
             let mut buf = [0u8; 65536];
             let mut partial: Vec<u8> = Vec::new();
+            let mut last_query = Instant::now();
+            // 累积状态查询结果
+            let mut players_raw = String::new();
+            let mut squads_raw = String::new();
+            let mut map_raw = String::new();
 
             loop {
-                match stream.read(&mut buf) {
-                    Ok(0) => {
-                        eprintln!("[RCON] 连接关闭，5秒后重连");
-                        break;
-                    }
+                // 每 5 秒查询状态
+                if last_query.elapsed().as_secs() >= 5 {
+                    players_raw.clear(); squads_raw.clear(); map_raw.clear();
+                    let _ = s.write_all(&build(2, 50, "ListPlayers"));
+                    let _ = s.write_all(&build(2, 51, "ListSquads"));
+                    let _ = s.write_all(&build(2, 52, "ShowNextMap"));
+                    last_query = Instant::now();
+                }
+
+                // 定时广播
+                if auto_broadcast_secs > 0 && !auto_broadcast_msg.is_empty() && last_bc.elapsed().as_secs() >= auto_broadcast_secs {
+                    let _ = s.write_all(&build(2, 0, &format!("AdminBroadcast \"{}\"", auto_broadcast_msg)));
+                    last_bc = Instant::now();
+                }
+
+                match s.read(&mut buf) {
+                    Ok(0) => { eprintln!("[RCON] 断开"); break; }
                     Ok(n) => {
                         partial.extend_from_slice(&buf[..n]);
-
-                        // 逐个提取完整的 RCON 包（基于二进制长度前缀）
-                        while let Some((packet, rest)) = extract_packet(&partial) {
+                        while let Some((pkt, rest)) = extract(&partial) {
                             partial = rest;
+                            let Some(body) = body_str(&pkt) else { continue };
+                            if body.is_empty() { continue; }
 
-                            if let Some(body) = parse_packet_body(&packet) {
-                                if body.is_empty() { continue; }
+                            // ===== 状态查询响应（按内容前缀识别） =====
+                            if body.starts_with("----- Active Players -----") {
+                                players_raw = read_multi(&body, &mut partial);
+                                eprintln!("[RCON] 玩家数据: {} 字节", players_raw.len());
+                                continue;
+                            }
+                            if body.starts_with("----- Active Squads -----") {
+                                squads_raw = read_multi(&body, &mut partial);
+                                eprintln!("[RCON] 小队数据: {} 字节, 前100: {:?}", squads_raw.len(), &squads_raw[..squads_raw.len().min(100)]);
+                                continue;
+                            }
+                            if body.contains("Current map is ") || body.contains("Next map is ") {
+                                map_raw = body.clone();
+                                eprintln!("[RCON] 地图数据: {:?}", &map_raw[..map_raw.len().min(100)]);
+                            }
 
-                                // 处理包体中的每一行事件
-                                for line in body.lines() {
-                                    let line = line.trim();
-                                    if line.is_empty() { continue; }
-
-                                    // SquadJS 聊天格式
-                                    if let Some(event) = parse_squadjs_chat(line) {
-                                        let _ = msg_tx.send(AgentMessage::Log {
-                                            data: LogEntry {
-                                                log_level: "INFO".to_string(),
-                                                category: Some(format!("Chat-{}", event.channel)),
-                                                message: format!("{}: {}", event.player_name, event.message),
-                                                raw_line: Some(line.to_string()),
-                                                logged_at: chrono::Utc::now(),
-                                            },
-                                        });
-                                        continue;
-                                    }
-
-                                    // 管理员镜头事件
-                                    if line.contains("POSSESSED_ADMIN_CAMERA") || line.contains("UNPOSSESSED_ADMIN_CAMERA") {
-                                        let _ = msg_tx.send(AgentMessage::Log {
-                                            data: LogEntry {
-                                                log_level: "INFO".to_string(),
-                                                category: Some("FlyEvent".to_string()),
-                                                message: line.to_string(),
-                                                raw_line: Some(line.to_string()),
-                                                logged_at: chrono::Utc::now(),
-                                            },
-                                        });
-                                        continue;
-                                    }
-
-                                    // 管理员操作事件
-                                    if line.contains("PLAYER_WARNED") || line.contains("PLAYER_KICKED") || line.contains("PLAYER_BANNED") {
-                                        let _ = msg_tx.send(AgentMessage::Log {
-                                            data: LogEntry {
-                                                log_level: "WARN".to_string(),
-                                                category: Some("AdminAction".to_string()),
-                                                message: line.to_string(),
-                                                raw_line: Some(line.to_string()),
-                                                logged_at: chrono::Utc::now(),
-                                            },
-                                        });
-                                    }
+                            // ===== 聚合状态报告 =====
+                            if !players_raw.is_empty() && !squads_raw.is_empty() {
+                                let players = parse_players(&players_raw);
+                                let squads = parse_squads(&squads_raw);
+                                let team_names = parse_team_names(&squads_raw);
+                                let map = map_raw.lines().next().unwrap_or("").to_string();
+                                eprintln!("[RCON] 上报: {}人 {}队 阵营{:?} 地图{}", players.len(), squads.len(), team_names.iter().map(|t|&t.faction).collect::<Vec<_>>(), map);
+                                if !players.is_empty() {
+                                    let _ = msg_tx.send(AgentMessage::ServerStateReport {
+                                        players, squads, team_names,
+                                        map_name: map, game_mode: String::new(),
+                                        server_name: String::new(), player_count: 0, max_players: 0,
+                                        next_map: String::new(),
+                                    });
                                 }
+                                players_raw.clear(); squads_raw.clear(); map_raw.clear();
+                                continue;
+                            }
+
+                            // ===== 聊天 =====
+                            if let Some(ev) = chat_event(&body) {
+                                let _ = msg_tx.send(AgentMessage::Log { data: LogEntry {
+                                    log_level: "INFO".into(), category: Some(format!("Chat-{}", ev.channel)),
+                                    message: format!("{}: {}", ev.player, ev.msg),
+                                    raw_line: Some(body), logged_at: chrono::Utc::now(),
+                                }});
+                                continue;
+                            }
+
+                            // ===== 玩家加入 =====
+                            if body.contains("PlayerConnected") || body.contains("joined the server") {
+                                if !welcome_msg.is_empty() {
+                                    let name = body.split(':').last().map(|s| s.trim()).unwrap_or("");
+                                    let _ = s.write_all(&build(2, 0, &format!("AdminBroadcast \"{}\"", welcome_msg.replace("{player}", name))));
+                                }
+                                let _ = msg_tx.send(AgentMessage::Log { data: LogEntry {
+                                    log_level: "INFO".into(), category: Some("PlayerJoin".into()),
+                                    message: body.clone(), raw_line: Some(body), logged_at: chrono::Utc::now(),
+                                }});
+                                continue;
+                            }
+
+                            // ===== 玩家离开 =====
+                            if body.contains("PlayerDisconnected") || body.contains("left the server") {
+                                let _ = msg_tx.send(AgentMessage::Log { data: LogEntry {
+                                    log_level: "INFO".into(), category: Some("PlayerLeave".into()),
+                                    message: body.clone(), raw_line: Some(body), logged_at: chrono::Utc::now(),
+                                }});
+                                continue;
+                            }
+
+                            // ===== 管理员镜头 =====
+                            if body.contains("POSSESSED_ADMIN_CAMERA") || body.contains("UNPOSSESSED_ADMIN_CAMERA") {
+                                let _ = msg_tx.send(AgentMessage::Log { data: LogEntry {
+                                    log_level: "INFO".into(), category: Some("FlyEvent".into()),
+                                    message: body.clone(), raw_line: Some(body), logged_at: chrono::Utc::now(),
+                                }});
+                                continue;
+                            }
+
+                            // ===== 管理员操作 =====
+                            if body.contains("PLAYER_WARNED") || body.contains("PLAYER_KICKED") || body.contains("PLAYER_BANNED") {
+                                let _ = msg_tx.send(AgentMessage::Log { data: LogEntry {
+                                    log_level: "WARN".into(), category: Some("AdminAction".into()),
+                                    message: body.clone(), raw_line: Some(body), logged_at: chrono::Utc::now(),
+                                }});
                             }
                         }
                     }
-                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut => {
-                        // 超时发送心跳
-                        let ping = build_packet(2, 0, "ping");
-                        let _ = stream.write_all(&ping);
-                    }
-                    Err(e) => {
-                        eprintln!("[RCON] 读取错误: {}", e);
-                        break;
-                    }
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut => {}
+                    Err(_) => { eprintln!("[RCON] 读错误"); break; }
                 }
             }
-            std::thread::sleep(Duration::from_secs(5));
+            sleep(backoff); backoff = (backoff*2).min(60);
         }
     });
 }
 
-struct ChatEvent {
-    channel: String,
-    player_name: String,
-    message: String,
+// === 读取多包（空包终止） ===
+fn read_multi(first: &str, partial: &mut Vec<u8>) -> String {
+    let mut out = first.to_string();
+    while let Some((p2, r2)) = extract(partial) {
+        *partial = r2;
+        if let Some(b2) = body_str(&p2) {
+            if b2.is_empty() { break; }
+            out.push_str(&b2);
+        } else { break; }
+    }
+    out
 }
 
-/// 解析 SquadJS 兼容的 RCON 聊天格式:
-/// [ChatAll] [Online IDs: EOS:xxx steam:xxx] PlayerName : Message
-fn parse_squadjs_chat(line: &str) -> Option<ChatEvent> {
-    let chat_start = if line.starts_with("[ChatAll]") { ("All", &line[9..]) }
-    else if line.starts_with("[ChatTeam]") { ("Team", &line[11..]) }
-    else if line.starts_with("[ChatSquad]") { ("Squad", &line[12..]) }
-    else if line.starts_with("[ChatAdmin]") { ("Admin", &line[12..]) }
-    else { return None };
+// === RCON 协议 ===
+fn build(t: i32, id: i32, body: &str) -> Vec<u8> {
+    let b = body.as_bytes();
+    let size = (10 + b.len()) as i32;
+    let mut p = Vec::with_capacity(4 + size as usize);
+    p.extend_from_slice(&size.to_le_bytes());
+    p.extend_from_slice(&id.to_le_bytes());
+    p.extend_from_slice(&t.to_le_bytes());
+    p.extend_from_slice(b);
+    p.push(0x00); p.push(0x00);
+    p
+}
+fn extract(data: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
+    if data.len() < 12 { return None; }
+    let size = i32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
+    if size < 10 { return None; }
+    let total = 4 + size;
+    if data.len() >= total { Some((data[..total].to_vec(), data[total..].to_vec())) } else { None }
+}
+fn body_str(pkt: &[u8]) -> Option<String> {
+    if pkt.len() < 14 { return None; }
+    let b = &pkt[12..pkt.len().saturating_sub(2)];
+    let pos = b.iter().rposition(|&x| x != 0).map_or(0, |i| i + 1);
+    String::from_utf8(b[..pos].to_vec()).ok()
+}
+fn sleep(s: u64) { std::thread::sleep(Duration::from_secs(s)); }
 
-    let rest = chat_start.1.trim();
-
-    // 跳过 [Online IDs:...] 部分
-    let after_ids = if rest.starts_with("[Online IDs:") {
-        if let Some(end) = rest.find(']') {
-            &rest[end + 1..]
-        } else { rest }
-    } else { rest };
-
-    let after_ids = after_ids.trim();
-
-    // 格式: PlayerName : Message
-    if let Some(colon_pos) = after_ids.find(" : ") {
-        let player_name = after_ids[..colon_pos].trim().to_string();
-        let message = after_ids[colon_pos + 3..].trim().to_string();
-        if !player_name.is_empty() {
-            return Some(ChatEvent { channel: chat_start.0.to_string(), player_name, message });
+// === 聊天 ===
+struct Chat { channel: String, player: String, msg: String }
+fn chat_event(raw: &str) -> Option<Chat> {
+    for line in raw.lines() {
+        let line = line.trim();
+        let (ch, rest) = if line.starts_with("[ChatAll]") { ("All", &line[9..]) }
+        else if line.starts_with("[ChatTeam]") { ("Team", &line[11..]) }
+        else if line.starts_with("[ChatSquad]") { ("Squad", &line[12..]) }
+        else if line.starts_with("[ChatAdmin]") { ("Admin", &line[12..]) }
+        else { continue };
+        let rest = rest.trim();
+        let after = if rest.starts_with("[Online IDs:") { rest.split(']').nth(1).unwrap_or(rest).trim() } else { rest };
+        if let Some(pos) = after.find(" : ") {
+            return Some(Chat { channel: ch.into(), player: after[..pos].trim().into(), msg: after[pos+3..].trim().into() });
         }
     }
-
-    // 也尝试旧格式: PlayerName (SteamID): message
-    if let Some(paren_start) = after_ids.find('(') {
-        let name = after_ids[..paren_start].trim().to_string();
-        if let Some(paren_end) = after_ids[paren_start..].find(')') {
-            let after = &after_ids[paren_start + paren_end + 1..];
-            let msg = after.trim_start_matches(": ").trim().to_string();
-            if !name.is_empty() {
-                return Some(ChatEvent { channel: chat_start.0.to_string(), player_name: name, message: msg });
-            }
-        }
-    }
-
     None
 }
 
-/// 从二进制缓冲区提取完整 RCON 包
-/// 返回 (包数据, 剩余数据)
-fn extract_packet(data: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
-    if data.len() < 12 { return None; }
-
-    let size = i32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
-    // RCON size 至少为 10 (id+type+2 null bytes)
-    if size < 10 { return None; }
-
-    let total = 4 + size;
-    if data.len() >= total {
-        let packet = data[..total].to_vec();
-        let rest = data[total..].to_vec();
-        Some((packet, rest))
-    } else {
-        None
+// === 解析 ===
+fn parse_players(raw: &str) -> Vec<PlayerInfo> {
+    let mut out = Vec::new();
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with("-----") { continue; }
+        let mut name=String::new(); let mut steam=String::new(); let mut tid=0i32; let mut sq=None; let mut role=String::new();
+        let mut k=0i32; let mut d=0i32; let mut sc=0i32; let mut ping=0i32; let mut admin=false;
+        for part in line.split('|') {
+            let v = part.trim();
+            if let Some(x)=v.strip_prefix("Name: ") { name=x.to_string(); }
+            else if let Some(x)=v.strip_prefix("Online IDs: ") {
+                // "Online IDs: EOS: xxx steam: 7656xxx" → 提取 steam ID
+                if let Some(pos)=x.find("steam: ") { steam = x[pos+7..].split_whitespace().next().unwrap_or("").to_string(); }
+            }
+            else if let Some(x)=v.strip_prefix("SteamID: ") { steam=x.to_string(); }
+            else if let Some(x)=v.strip_prefix("Team ID: ") { tid=x.parse().unwrap_or(0); }
+            else if let Some(x)=v.strip_prefix("Squad ID: ") { let x=x.trim(); if x!="N/A"&&!x.is_empty() { sq=Some(x.to_string()); } }
+            else if let Some(x)=v.strip_prefix("Role: ") { role=x.to_string(); }
+            else if let Some(x)=v.strip_prefix("Kills: ") { k=x.parse().unwrap_or(0); }
+            else if let Some(x)=v.strip_prefix("Deaths: ") { d=x.parse().unwrap_or(0); }
+            else if let Some(x)=v.strip_prefix("Score: ") { sc=x.parse().unwrap_or(0); }
+            else if let Some(x)=v.strip_prefix("Ping: ") { ping=x.parse().unwrap_or(0); }
+            else if let Some(x)=v.strip_prefix("Admin: ") { admin=x.trim()=="True"; }
+            else if let Some(_)=v.strip_prefix("Is Leader: ") {}
+        }
+        if !name.is_empty() { out.push(PlayerInfo{name,steam_id:steam,team_id:tid,squad_id:sq,role,kills:k,deaths:d,score:sc,ping,is_admin:admin}); }
     }
+    out
 }
-
-/// 从二进制 RCON 包中提取文本 body
-/// 包结构: [4字节size][4字节id][4字节type][body字符串\0][\0]
-fn parse_packet_body(packet: &[u8]) -> Option<String> {
-    if packet.len() < 14 { return None; }
-    // body 从第12字节开始，到末尾2字节之前
-    let body_end = packet.len().saturating_sub(2);
-    if body_end <= 12 { return None; }
-    let body_bytes = &packet[12..body_end];
-    // 去除尾部 null 字节
-    let body_bytes = match body_bytes.iter().rposition(|&b| b != 0) {
-        Some(pos) => &body_bytes[..=pos],
-        None => return None,
-    };
-    String::from_utf8(body_bytes.to_vec()).ok()
+fn parse_squads(raw: &str) -> Vec<SquadInfo> {
+    let mut out=Vec::new(); let mut ct=0i32;
+    for line in raw.lines() {
+        let line=line.trim();
+        if line.is_empty()||line.starts_with("-----") { continue; }
+        if line.to_lowercase().starts_with("team id:") { ct=line.split_whitespace().nth(2).and_then(|s|s.parse().ok()).unwrap_or(0); continue; }
+        if line.to_lowercase().starts_with("squad ") {
+            if let Some((_,rest))=line.split_once(": ") {
+                let (name,creator)=rest.split_once(" - ").map_or((rest.to_string(),String::new()),|(a,b)|(a.trim().to_string(),b.trim().to_string()));
+                out.push(SquadInfo{name,creator,team_id:ct});
+            }
+        }
+    }
+    out
 }
-
-/// 构建 Source RCON 协议包
-fn build_packet(packet_type: i32, packet_id: i32, body: &str) -> Vec<u8> {
-    let body_bytes = body.as_bytes();
-    // size = id(4) + type(4) + body + null(1) + null(1)
-    let size = (10 + body_bytes.len()) as i32;
-    let mut packet = Vec::with_capacity(4 + size as usize);
-    packet.extend_from_slice(&size.to_le_bytes());
-    packet.extend_from_slice(&packet_id.to_le_bytes());
-    packet.extend_from_slice(&packet_type.to_le_bytes());
-    packet.extend_from_slice(body_bytes);
-    packet.push(0x00);
-    packet.push(0x00);
-    packet
+fn parse_team_names(raw: &str) -> Vec<TeamName> {
+    let mut out=Vec::new();
+    for line in raw.lines() {
+        let line=line.trim();
+        if line.to_lowercase().starts_with("team id:") {
+            let after=line.split(':').nth(1).unwrap_or("").trim();
+            if let Some(p)=after.find('(') {
+                if let Ok(id)=after[..p].trim().parse() {
+                    out.push(TeamName{team_id:id,faction:after[p+1..].trim_end_matches(')').to_string()});
+                }
+            }
+        }
+    }
+    out
 }

@@ -15,7 +15,10 @@ pub async fn create(
     Json(req): Json<CreateAdminRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     match admin_user_service::create(&state.pool, req).await {
-        Ok(user) => Ok(Json(serde_json::json!(user))),
+        Ok(user) => {
+            crate::services::system_log::action_log(&state.pool, "admin_users", &format!("创建管理员 {}", user.username), "").await;
+            Ok(Json(serde_json::json!(user)))
+        }
         Err(e) => Ok(Json(serde_json::json!({ "error": e }))),
     }
 }
@@ -26,7 +29,10 @@ pub async fn update(
     Json(req): Json<UpdateAdminRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     match admin_user_service::update(&state.pool, id, req).await {
-        Ok(Some(user)) => Ok(Json(serde_json::json!(user))),
+        Ok(Some(user)) => {
+            crate::services::system_log::action_log(&state.pool, "admin_users", &format!("更新管理员 {}", user.username), "").await;
+            Ok(Json(serde_json::json!(user)))
+        }
         Ok(None) => Err(StatusCode::NOT_FOUND),
         Err(e) => Ok(Json(serde_json::json!({ "error": e }))),
     }

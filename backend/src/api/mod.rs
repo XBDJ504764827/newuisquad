@@ -36,6 +36,8 @@ pub struct AppState {
     pub agent_pool: Option<AgentPool>,
     pub steam_api_key: String,
     pub jwt_secret: String,
+    // Agent 上报的服务器状态缓存 { server_id -> state_json }
+    pub server_states: Arc<std::sync::RwLock<std::collections::HashMap<String, serde_json::Value>>>,
 }
 
 pub fn build_router(state: AppState) -> Router {
@@ -71,9 +73,15 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v1/servers/{id}/abnormal-damage-logs", get(abnormal_damage::list_logs))
         .route("/api/v1/servers/{id}/fly-events", get(squad_events::fly_events))
         .route("/api/v1/servers/{id}/kill-events", get(squad_events::kill_events))
+        .route("/api/v1/servers/{id}/match-events", get(squad_events::match_events))
+        .route("/api/v1/servers/{id}/explosion-events", get(squad_events::explosion_events))
+        .route("/api/v1/servers/{id}/summary", get(server_info::summary))
         .route("/api/v1/servers/{id}/player-info", get(squad_events::player_info))
         .route("/api/v1/servers/{id}/chat-messages", get(chat::list))
         .route("/api/v1/servers/{id}/server-state", get(server_control::get_server_state))
+        .route("/api/v1/servers/{id}/server-info", get(server_control::get_server_info))
+        .route("/api/v1/servers/{id}/bans", get(server_control::get_bans))
+        .route("/api/v1/servers/{id}/warns", get(server_control::get_warns))
         .route("/api/v1/servers/{id}/player-action", post(server_control::player_action))
         .route("/api/v1/servers/{id}/disband-squad/{team_id}/{squad_id}", axum::routing::delete(server_control::disband_squad))
         .route("/api/v1/operation-logs", get(operation_logs::list))

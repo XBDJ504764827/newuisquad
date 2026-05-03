@@ -57,7 +57,7 @@ pub fn start_watching(file_path: PathBuf, msg_tx: mpsc::UnboundedSender<AgentMes
                                             continue;
                                         }
                                         let entry = parse_log_line(line);
-                                        eprintln!("[LogWatcher] -> [{}] {}", entry.log_level, entry.message.chars().take(80).collect::<String>());
+                                        eprintln!("[LogWatcher] -> [{}] {}", entry.log_level, entry.message);
                                         if msg_tx.send(AgentMessage::Log { data: entry }).is_err() {
                                                             tracing::error!("日志行发送失败（通道已关闭）");
                                                             return;

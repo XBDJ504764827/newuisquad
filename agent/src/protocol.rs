@@ -9,26 +9,25 @@ pub enum AgentMessage {
     Log { data: LogEntry },
     #[serde(rename = "file_read_result")]
     FileReadResult {
-        request_id: String,
-        success: bool,
-        path: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        content: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        error: Option<String>,
+        request_id: String, success: bool, path: String,
+        #[serde(skip_serializing_if = "Option::is_none")] content: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")] error: Option<String>,
     },
     #[serde(rename = "file_write_result")]
     FileWriteResult {
-        request_id: String,
-        success: bool,
-        path: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        error: Option<String>,
+        request_id: String, success: bool, path: String,
+        #[serde(skip_serializing_if = "Option::is_none")] error: Option<String>,
     },
     #[serde(rename = "file_list_result")]
-    FileListResult {
-        request_id: String,
-        files: Vec<FileInfo>,
+    FileListResult { request_id: String, files: Vec<FileInfo> },
+    #[serde(rename = "server_state_report")]
+    ServerStateReport {
+        players: Vec<PlayerInfo>,
+        squads: Vec<SquadInfo>,
+        team_names: Vec<TeamName>,
+        map_name: String, game_mode: String,
+        server_name: String, player_count: i32, max_players: i32,
+        next_map: String,
     },
 
     // 后端 → Agent
@@ -50,7 +49,21 @@ pub struct LogEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FileInfo {
-    pub name: String,
-    pub size: u64,
+pub struct FileInfo { pub name: String, pub size: u64 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlayerInfo {
+    pub name: String, pub steam_id: String, pub team_id: i32,
+    pub squad_id: Option<String>, pub role: String,
+    pub kills: i32, pub deaths: i32, pub score: i32, pub ping: i32, pub is_admin: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SquadInfo {
+    pub name: String, pub creator: String, pub team_id: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamName {
+    pub team_id: i32, pub faction: String,
 }

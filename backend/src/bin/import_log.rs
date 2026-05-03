@@ -77,6 +77,7 @@ async fn main() -> anyhow::Result<()> {
                 admin_console_backend::services::squad_log_parser::ParsedEvent::ChatMessage { player_name, steam64, message, channel, logged_at } => {
                     let _ = sqlx::query("INSERT INTO chat_messages (server_id, player_name, steam64, message, channel, logged_at) VALUES ($1,$2,$3,$4,$5,$6)").bind(server_id).bind(&player_name).bind(&steam64).bind(&message).bind(&channel).bind(logged_at).execute(&pool).await;
                 }
+                _ => {}
             }
         }
         if count % 10000 == 0 { println!("已处理 {} 行...", count); }

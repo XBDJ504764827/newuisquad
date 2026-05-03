@@ -92,10 +92,11 @@ pub async fn handler(
         .fetch_optional(&pool)
         .await;
 
+    let server_states = state.server_states.clone();
     match result {
         Ok(Some(row)) => {
             let server_id: i32 = row.get(0);
-            ws.on_upgrade(move |socket| handle_socket(socket, pool, agent_pool, server_id.to_string()))
+            ws.on_upgrade(move |socket| handle_socket(socket, pool, agent_pool, server_states, server_id.to_string()))
         }
         _ => {
             ws.on_upgrade(|mut socket| async move {
@@ -110,6 +111,7 @@ async fn handle_socket(
     socket: WebSocket,
     db_pool: sqlx::PgPool,
     agent_pool: AgentPool,
+    server_states: Arc<std::sync::RwLock<std::collections::HashMap<String, serde_json::Value>>>,
     server_id: String,
 ) {
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<AgentMessage>();
@@ -196,6 +198,9 @@ async fn handle_socket(
                                         ParsedEvent::ChatMessage { player_name, steam64, message, channel, logged_at } => {
                                             let _ = sqlx::query("INSERT INTO chat_messages (server_id, player_name, steam64, message, channel, logged_at) VALUES ($1,$2,$3,$4,$5,$6)").bind(sid).bind(&player_name).bind(&steam64).bind(&message).bind(&channel).bind(logged_at).execute(&pool).await;
                                         }
+                                        ParsedEvent::ExplosionEvent { pos_x, pos_y, pos_z, damage_causer, damage_instigator, logged_at } => {
+                                            let _ = sqlx::query("INSERT INTO explosion_events (server_id, pos_x, pos_y, pos_z, damage_causer, damage_instigator, logged_at) VALUES ($1,$2,$3,$4,$5,$6,$7)").bind(sid).bind(pos_x).bind(pos_y).bind(pos_z).bind(&damage_causer).bind(&damage_instigator).bind(logged_at).execute(&pool).await;
+                                        }
                                         _ => {}
                                     }
                                 }
@@ -207,6 +212,29 @@ async fn handle_socket(
                             let rid = request_id.clone();
                             if let Some(tx) = pending.write().await.remove(&rid) {
                                 let _ = tx.send(agent_msg.clone());
+                            }
+                        }
+                        AgentMessage::ServerStateReport { players, squads, team_names, map_name, game_mode, server_name, player_count, max_players, next_map } => {
+                            tracing::info!(server_id = %sid, players = players.len(), squads = squads.len(), map = %map_name, "收到服务器状态上报");
+                            let teams: Vec<serde_json::Value> = team_names.iter().map(|t| serde_json::json!({
+                                "team_id": t.team_id, "faction": t.faction,
+                            })).collect();
+                            let state = serde_json::json!({
+                                "players": players.iter().map(|p| serde_json::json!({
+                                    "name": p.name, "steam_id": p.steam_id, "team_id": p.team_id,
+                                    "squad_id": p.squad_id, "role": p.role, "kills": p.kills,
+                                    "deaths": p.deaths, "score": p.score, "ping": p.ping, "is_admin": p.is_admin,
+                                })).collect::<Vec<_>>(),
+                                "squads": squads.iter().map(|s| serde_json::json!({
+                                    "name": s.name, "creator": s.creator, "team_id": s.team_id,
+                                })).collect::<Vec<_>>(),
+                                "teams": teams,
+                                "map_name": map_name, "game_mode": game_mode,
+                                "server_name": server_name, "player_count": player_count,
+                                "max_players": max_players, "next_map": next_map,
+                            });
+                            if let Ok(mut cache) = server_states.write() {
+                                cache.insert(sid.to_string(), state);
                             }
                         }
                         _ => {}

@@ -92,6 +92,14 @@ pub enum ParsedEvent {
         channel: String,
         logged_at: NaiveDateTime,
     },
+    ExplosionEvent {
+        pos_x: f64,
+        pos_y: f64,
+        pos_z: f64,
+        damage_causer: String,
+        damage_instigator: String,
+        logged_at: NaiveDateTime,
+    },
 }
 
 /// 解析 Squad 日志行的时间戳 [2026.05.01-06.17.03:441]
@@ -128,9 +136,17 @@ fn extract_online_ids(text: &str) -> (String, String) {
     (eos, steam)
 }
 
+fn extract_float_after(line: &str, prefix: &str) -> f64 {
+    line.split(prefix).nth(1)
+        .and_then(|s| s.split(&[' ', ',', ')', ']'][..]).next())
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0.0)
+}
+
 /// 解析单行日志
 pub fn parse_line(line: &str) -> Option<ParsedEvent> {
-    let ts = parse_timestamp(line)?;
+    let ts = parse_timestamp(line)
+        .unwrap_or_else(|| chrono::Utc::now().naive_utc());
 
     // 1. PostLogin: 最完整的玩家信息
     if line.contains("PostLogin:") {
@@ -493,7 +509,17 @@ pub fn parse_line(line: &str) -> Option<ParsedEvent> {
         return Some(ParsedEvent::PlayerDeath { player_name, steam64: steam, killer_steam64: killer_steam, weapon, logged_at: ts });
     }
 
-    // 17. 聊天消息 - SquadJS RCON 兼容格式
+    // 17. 爆炸事件坐标
+    if line.contains("ApplyExplosiveDamage():") {
+        let pos_x = extract_float_after(line, "X=");
+        let pos_y = extract_float_after(line, "Y=");
+        let pos_z = extract_float_after(line, "Z=");
+        let damage_causer = line.split("DamageCauser=").nth(1).and_then(|s| s.split(&[' ', ','][..]).next()).unwrap_or("").to_string();
+        let damage_instigator = line.split("DamageInstigator=").nth(1).and_then(|s| s.split(&[' ', ','][..]).next()).unwrap_or("").to_string();
+        return Some(ParsedEvent::ExplosionEvent { pos_x, pos_y, pos_z, damage_causer, damage_instigator, logged_at: ts });
+    }
+
+    // 18. 聊天消息 - SquadJS RCON 兼容格式
     // 格式1 (RCON): [ChatAll] [Online IDs: EOS:xxx steam:xxx] PlayerName : Message
     // 格式2 (日志): [ChatAll] PlayerName (SteamID): message
     let chat_prefixes = ["[ChatAll]", "[ChatTeam]", "[ChatSquad]", "[ChatAdmin]"];

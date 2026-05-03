@@ -48,7 +48,58 @@ pub async fn get_map(ip: &str, port: u16, password: &str) -> Result<(String, Str
     Ok(parse_map(&raw))
 }
 
-/// 获取完整服务器状态
+/// Ban/Warn 条目
+#[derive(serde::Serialize)]
+pub struct BanEntry {
+    pub player_name: String,
+    pub steam_id: String,
+    pub duration: String,
+    pub reason: String,
+    pub admin: String,
+}
+
+#[derive(serde::Serialize)]
+pub struct WarnEntry {
+    pub player_name: String,
+    pub steam_id: String,
+    pub reason: String,
+    pub admin: String,
+}
+
+#[derive(serde::Serialize)]
+pub struct ServerInfo {
+    pub server_name: String,
+    pub player_count: i32,
+    pub max_players: i32,
+    pub map_name: String,
+    pub game_mode: String,
+    pub next_map: String,
+    pub next_layer: String,
+}
+
+/// 获取 Ban 列表
+pub async fn get_bans(ip: &str, port: u16, password: &str) -> Result<Vec<BanEntry>, String> {
+    let mut rcon = SquadRcon::connect(ip, port, password).await?;
+    let raw = rcon.execute("AdminListBans").await?;
+    Ok(parse_ban_list(&raw))
+}
+
+/// 获取 Warn 列表
+pub async fn get_warns(ip: &str, port: u16, password: &str) -> Result<Vec<WarnEntry>, String> {
+    let mut rcon = SquadRcon::connect(ip, port, password).await?;
+    let raw = rcon.execute("AdminListWarns").await?;
+    Ok(parse_warn_list(&raw))
+}
+
+/// 获取服务器基本信息
+pub async fn get_server_info(ip: &str, port: u16, password: &str) -> Result<ServerInfo, String> {
+    let mut rcon = SquadRcon::connect(ip, port, password).await?;
+    let raw = rcon.execute("ShowServerInfo").await?;
+    let (next_map, next_layer) = get_map(ip, port, password).await.unwrap_or_default();
+    Ok(parse_server_info(&raw, &next_map, &next_layer))
+}
+
+/// 获取完整服务器状态（含 ban/warn/server info）
 pub async fn get_server_state(ip: &str, port: u16, password: &str) -> Result<ServerState, String> {
     let players = list_players(ip, port, password).await.unwrap_or_default();
     let squads = list_squads(ip, port, password).await.unwrap_or_default();
@@ -148,4 +199,75 @@ fn parse_map(raw: &str) -> (String, String) {
     if map_name.is_empty() { map_name = "Unknown".to_string(); }
     if game_mode.is_empty() { game_mode = "Unknown".to_string(); }
     (map_name, game_mode)
+}
+
+fn parse_ban_list(raw: &str) -> Vec<BanEntry> {
+    let mut bans = Vec::new();
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with("-----") { continue; }
+        let mut name = String::new();
+        let mut steam_id = String::new();
+        let mut duration = String::new();
+        let mut reason = String::new();
+        let mut admin = String::new();
+        for part in line.split('|') {
+            let part = part.trim();
+            if let Some(v) = part.strip_prefix("Name: ") { name = v.to_string(); }
+            else if let Some(v) = part.strip_prefix("SteamID: ") { steam_id = v.to_string(); }
+            else if let Some(v) = part.strip_prefix("Duration: ") { duration = v.to_string(); }
+            else if let Some(v) = part.strip_prefix("Reason: ") { reason = v.to_string(); }
+            else if let Some(v) = part.strip_prefix("Admin: ") { admin = v.to_string(); }
+        }
+        if !name.is_empty() { bans.push(BanEntry { player_name: name, steam_id, duration, reason, admin }); }
+    }
+    bans
+}
+
+fn parse_warn_list(raw: &str) -> Vec<WarnEntry> {
+    let mut warns = Vec::new();
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with("-----") { continue; }
+        let mut name = String::new();
+        let mut steam_id = String::new();
+        let mut reason = String::new();
+        let mut admin = String::new();
+        for part in line.split('|') {
+            let part = part.trim();
+            if let Some(v) = part.strip_prefix("Name: ") { name = v.to_string(); }
+            else if let Some(v) = part.strip_prefix("SteamID: ") { steam_id = v.to_string(); }
+            else if let Some(v) = part.strip_prefix("Reason: ") { reason = v.to_string(); }
+            else if let Some(v) = part.strip_prefix("Admin: ") { admin = v.to_string(); }
+        }
+        if !name.is_empty() { warns.push(WarnEntry { player_name: name, steam_id, reason, admin }); }
+    }
+    warns
+}
+
+fn parse_server_info(raw: &str, next_map: &str, next_layer: &str) -> ServerInfo {
+    let mut server_name = String::new();
+    let mut player_count = 0i32;
+    let mut max_players = 0i32;
+    let mut map_name = String::new();
+    let mut game_mode = String::new();
+
+    for line in raw.lines() {
+        let line = line.trim();
+        if let Some(v) = line.strip_prefix("Server name: ") { server_name = v.to_string(); }
+        else if let Some(v) = line.strip_prefix("Player count: ") { player_count = v.trim().parse().unwrap_or(0); }
+        else if let Some(v) = line.strip_prefix("Max players: ") { max_players = v.trim().parse().unwrap_or(0); }
+        else if let Some(v) = line.strip_prefix("Map: ") { map_name = v.to_string(); }
+        else if let Some(v) = line.strip_prefix("Game Mode: ") { game_mode = v.to_string(); }
+    }
+
+    ServerInfo {
+        server_name,
+        player_count,
+        max_players,
+        map_name: if map_name.is_empty() { "Unknown".to_string() } else { map_name },
+        game_mode: if game_mode.is_empty() { "Unknown".to_string() } else { game_mode },
+        next_map: next_map.to_string(),
+        next_layer: next_layer.to_string(),
+    }
 }
