@@ -22,6 +22,7 @@ pub mod auth_middleware;
 pub mod chat;
 
 use axum::{Router, routing::{get, post, put}};
+use axum::middleware::from_fn;
 use sqlx::PgPool;
 use std::sync::Arc;
 use tokio::sync::broadcast;
@@ -38,7 +39,14 @@ pub struct AppState {
 }
 
 pub fn build_router(state: AppState) -> Router {
-    Router::new()
+    // 公开路由（无需认证）
+    let public = Router::new()
+        .route("/api/v1/auth/login", post(auth::login))
+        .route("/api/v1/auth/verify", post(auth::verify_token))
+        .route("/agent/connect", get(agent_ws::handler));
+
+    // 受保护路由（需要 Bearer Token 认证）
+    let protected = Router::new()
         .route("/api/v1/servers", get(server_info::list).post(servers::create))
         .route("/api/v1/servers/{id}", get(server_info::get_one).put(server_info::update).delete(server_info::delete))
         .route("/api/v1/servers/{id}/rcon", post(rcon::execute))
@@ -68,12 +76,14 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v1/servers/{id}/server-state", get(server_control::get_server_state))
         .route("/api/v1/servers/{id}/player-action", post(server_control::player_action))
         .route("/api/v1/servers/{id}/disband-squad/{team_id}/{squad_id}", axum::routing::delete(server_control::disband_squad))
-        .route("/api/v1/auth/login", post(auth::login))
-        .route("/api/v1/auth/verify", post(auth::verify_token))
         .route("/api/v1/operation-logs", get(operation_logs::list))
         .route("/api/v1/admins", get(admin_users::list).post(admin_users::create))
         .route("/api/v1/admins/{id}", put(admin_users::update).delete(admin_users::delete))
-        .route("/agent/connect", get(agent_ws::handler))
+        .layer(from_fn(auth_middleware::require_auth));
+
+    Router::new()
+        .merge(public)
+        .merge(protected)
         .with_state(state.clone())
         .layer(axum::Extension(state.jwt_secret.clone()))
 }

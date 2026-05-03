@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 
-const API_BASE = 'http://192.168.0.137:8000/api/v1';
+const API_BASE = '/api/v1';
 
 interface KillEvent { id: number; attacker_name: string; attacker_eos: string; attacker_steam64: string; victim_name: string; damage: number; weapon: string; is_kill: boolean; is_teamkill: boolean; logged_at: string; }
 

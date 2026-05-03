@@ -155,6 +155,8 @@ const navSections: NavSectionDef[] = [
 
 export default function Sidebar({ collapsed, activePage, permissions, onNavigate }: SidebarProps) {
   const hasPerm = (pageId: string): boolean => {
+    // 超级管理员（all: true）可访问所有页面
+    if (permissions['all']) return true;
     const permKey = PAGE_PERMISSION_MAP[pageId];
     if (!permKey) return true;
     return !!permissions[permKey];

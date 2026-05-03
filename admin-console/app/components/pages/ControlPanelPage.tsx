@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 
-const API_BASE = 'http://192.168.0.137:8000/api/v1';
+const API_BASE = '/api/v1';
 
 interface Server {
   id: number;

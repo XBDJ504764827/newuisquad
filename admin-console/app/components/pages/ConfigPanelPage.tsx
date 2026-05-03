@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 
-const API_BASE = 'http://192.168.0.137:8000/api/v1';
+const API_BASE = '/api/v1';
 
 const configTabs = [
   { id: 'tab-1', label: '快捷设置' },

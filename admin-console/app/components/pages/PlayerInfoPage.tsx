@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 
-const API_BASE = 'http://192.168.0.137:8000/api/v1';
+const API_BASE = '/api/v1';
 
 interface PlayerInfo { server_id: number; player_name: string; steam64: string; eos_id: string; ip: string; first_seen: string; last_seen: string; }
 

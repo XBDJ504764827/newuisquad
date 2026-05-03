@@ -45,6 +45,9 @@ pub async fn login(
         exp: (Utc::now() + chrono::Duration::hours(24)).timestamp() as usize,
     };
 
+    let mut validation = Validation::default();
+    validation.validate_exp = true;
+
     let token = encode(&Header::default(), &claims, &EncodingKey::from_secret(state.jwt_secret.as_bytes()))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -58,7 +61,9 @@ pub async fn verify_token(
     Json(req): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let token = req["token"].as_str().unwrap_or("");
-    match decode::<Claims>(token, &DecodingKey::from_secret(state.jwt_secret.as_bytes()), &Validation::default()) {
+    let mut validation = Validation::default();
+    validation.validate_exp = true;
+    match decode::<Claims>(token, &DecodingKey::from_secret(state.jwt_secret.as_bytes()), &validation) {
         Ok(data) => Ok(Json(serde_json::json!({ "valid": true, "username": data.claims.username, "role": data.claims.role, "permissions": data.claims.permissions }))),
         Err(_) => Ok(Json(serde_json::json!({ "valid": false }))),
     }

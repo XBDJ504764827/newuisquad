@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 
-const API_BASE = 'http://192.168.0.137:8000/api/v1';
+const API_BASE = '/api/v1';
 
 export default function ChatLogsPage() {
   const [servers, setServers] = useState<{ id: number; name: string }[]>([]);
