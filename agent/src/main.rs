@@ -36,13 +36,13 @@ async fn main() -> anyhow::Result<()> {
     // Channel B: WebSocket(后端消息) → ws_client → file_ops
     let (to_agent_tx, to_agent_rx) = mpsc::unbounded_channel::<protocol::AgentMessage>();
 
-    let ws_url = format!("{}?token={}", config.backend_ws_url, config.token);
-
-    // WebSocket 客户端
+    // WebSocket 客户端（token 通过 X-Auth-Token 头传递，不再放在 URL query string 中）
     let ws_tx = to_agent_tx.clone();
     let ws_rx = Arc::new(Mutex::new(to_ws_rx));
+    let ws_url = config.backend_ws_url.clone();
+    let ws_token = config.token.clone();
     let ws_handle = tokio::spawn(async move {
-        ws_client::run(ws_url, ws_tx, ws_rx).await;
+        ws_client::run(ws_url, ws_token, ws_tx, ws_rx).await;
     });
 
     // RCON 实时监听 → Channel A（聊天、事件）

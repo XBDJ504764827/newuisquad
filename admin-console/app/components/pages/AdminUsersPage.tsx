@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 
-const API_BASE = '/api/v1';
+import { api } from '../../lib/api';
 
 interface AdminUser {
   id: number;
@@ -49,7 +49,7 @@ export default function AdminUsersPage() {
   });
 
   const loadUsers = useCallback(async () => {
-    const res = await fetch(`${API_BASE}/admins`);
+    const res = await api(`/admins`);
     const data = await res.json();
     setUsers(data.data || []);
     setLoading(false);
@@ -86,10 +86,10 @@ export default function AdminUsersPage() {
     };
     if (form.password) body.password = form.password;
 
-    const url = editing ? `${API_BASE}/admins/${editing.id}` : `${API_BASE}/admins`;
+    const url = editing ? `/admins/${editing.id}` : `/admins`;
     const method = editing ? 'PUT' : 'POST';
 
-    const res = await fetch(url, {
+    const res = await api(url, {
       method, headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
@@ -102,7 +102,7 @@ export default function AdminUsersPage() {
   };
 
   const handleDelete = async (id: number) => {
-    await fetch(`${API_BASE}/admins/${id}`, { method: 'DELETE' });
+    await api(`/admins/${id}`, { method: 'DELETE' });
     setSuccess('管理员已删除');
     setTimeout(() => setSuccess(''), 3000);
     loadUsers();

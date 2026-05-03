@@ -1,4 +1,5 @@
 use axum::extract::{ws::{WebSocket, WebSocketUpgrade, Message}, Query, State};
+use axum::http::HeaderMap;
 use axum::response::IntoResponse;
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
@@ -12,7 +13,7 @@ use crate::api::AppState;
 
 #[derive(Deserialize)]
 pub struct AgentQuery {
-    pub token: String,
+    pub token: Option<String>,
 }
 
 #[derive(Clone)]
@@ -45,26 +46,45 @@ impl AgentPool {
         let agents = self.agents.read().await;
         let tx = agents.get(server_id).ok_or("Agent 未连接")?;
         let (resp_tx, resp_rx) = oneshot::channel();
-        self.pending
-            .write()
-            .await
-            .insert(request_id.to_string(), resp_tx);
         tx.send(cmd).map_err(|e| format!("发送失败: {}", e))?;
-        tokio::time::timeout(std::time::Duration::from_secs(10), resp_rx)
-            .await
-            .map_err(|_| "响应超时".to_string())?
-            .map_err(|_| "Agent 断开".to_string())
+        // 仅在发送成功后注册等待
+        self.pending.write().await.insert(request_id.to_string(), resp_tx);
+        match tokio::time::timeout(std::time::Duration::from_secs(10), resp_rx).await {
+            Ok(Ok(msg)) => Ok(msg),
+            Ok(Err(_)) => Err("Agent 断开".to_string()),
+            Err(_) => {
+                // 超时后清理 pending 条目，防止内存泄漏
+                self.pending.write().await.remove(request_id);
+                Err("响应超时".to_string())
+            }
+        }
     }
 }
 
 pub async fn handler(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(q): Query<AgentQuery>,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
     let pool = state.pool.clone();
-    let token = q.token.clone();
-    let agent_pool = state.agent_pool.clone().unwrap();
+
+    // 优先从 X-Auth-Token 头获取，降级到 query param（兼容旧 agent）
+    let token = headers.get("X-Auth-Token")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string())
+        .or_else(|| q.token.clone().filter(|t| !t.is_empty()))
+        .unwrap_or_default();
+
+    let agent_pool = match state.agent_pool.clone() {
+        Some(p) => p,
+        None => {
+            return ws.on_upgrade(|mut socket| async move {
+                let _ = socket.send(Message::Text("{\"error\":\"Agent 连接池未初始化\"}".into())).await;
+                let _ = socket.close().await;
+            });
+        }
+    };
 
     // 验证 token
     let result = sqlx::query("SELECT id FROM servers WHERE token = $1")
@@ -215,6 +235,8 @@ async fn handle_socket(
     }
 
     agent_pool.agents.write().await.remove(&server_id);
+    // 清理该 Agent 相关的所有待处理请求
+    agent_pool.pending.write().await.clear();
     tracing::info!("Agent 已断开: {}", server_id);
     crate::services::system_log::agent_event(&db_pool, "agent_ws", &format!("Agent 已断开 server_id={}", server_id)).await;
 }

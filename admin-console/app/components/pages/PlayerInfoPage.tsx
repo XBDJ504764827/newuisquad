@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 
-const API_BASE = '/api/v1';
+import { api } from '../../lib/api';
 
 interface PlayerInfo { server_id: number; player_name: string; steam64: string; eos_id: string; ip: string; first_seen: string; last_seen: string; }
 
@@ -16,7 +16,7 @@ export default function PlayerInfoPage() {
   const [search, setSearch] = useState('');
 
   useEffect(() => {
-    fetch(`${API_BASE}/servers`).then(r => r.json())
+    api(`/servers`).then(r => r.json())
       .then(d => { setServers(d.data || []); if (d.data?.length > 0) setServerId(d.data[0].id); })
       .catch(() => {});
   }, []);
@@ -24,7 +24,7 @@ export default function PlayerInfoPage() {
   useEffect(() => {
     if (!serverId) return; setLoading(true);
     const qs = search ? `&steam64=${encodeURIComponent(search)}` : '';
-    fetch(`${API_BASE}/servers/${serverId}/player-info?page=${page}&per_page=50${qs}`).then(r => r.json())
+    api(`/servers/${serverId}/player-info?page=${page}&per_page=50${qs}`).then(r => r.json())
       .then(d => { setPlayers(d.data || []); setTotal(d.total || 0); setLoading(false); }).catch(() => setLoading(false));
   }, [serverId, page, search]);
 

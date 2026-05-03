@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 
-const API_BASE = '/api/v1';
+import { api } from '../../lib/api';
 
 interface KillEvent { id: number; attacker_name: string; attacker_eos: string; attacker_steam64: string; victim_name: string; damage: number; weapon: string; is_kill: boolean; is_teamkill: boolean; logged_at: string; }
 
@@ -15,14 +15,14 @@ export default function KillLogsPage() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    fetch(`${API_BASE}/servers`).then(r => r.json())
+    api(`/servers`).then(r => r.json())
       .then(d => { setServers(d.data || []); if (d.data?.length > 0) setServerId(d.data[0].id); })
       .catch(() => {});
   }, []);
 
   useEffect(() => {
     if (!serverId) return; setLoading(true);
-    fetch(`${API_BASE}/servers/${serverId}/kill-events?page=${page}&per_page=50`).then(r => r.json())
+    api(`/servers/${serverId}/kill-events?page=${page}&per_page=50`).then(r => r.json())
       .then(d => { setEvents(d.data || []); setTotal(d.total || 0); setLoading(false); }).catch(() => setLoading(false));
   }, [serverId, page]);
 

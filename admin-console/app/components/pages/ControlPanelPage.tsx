@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 
-const API_BASE = '/api/v1';
+import { api } from '../../lib/api';
 
 interface Server {
   id: number;
@@ -46,7 +46,7 @@ export default function ControlPanelPage() {
   const [selectedTeam, setSelectedTeam] = useState(1);
 
   useEffect(() => {
-    fetch(`${API_BASE}/servers`)
+    api(`/servers`)
       .then(r => r.json())
       .then(data => {
         setServers(data.data || []);
@@ -59,7 +59,9 @@ export default function ControlPanelPage() {
   useEffect(() => {
     if (!selectedServer) return;
     if (wsRef.current) wsRef.current.close();
-    const ws = new WebSocket(`ws://192.168.0.137:8000/api/v1/servers/${selectedServer.id}/logs/stream`);
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const token = localStorage.getItem('token') || '';
+    const ws = new WebSocket(`${proto}//${window.location.host}/api/v1/servers/${selectedServer.id}/logs/stream?token=${encodeURIComponent(token)}`);
     ws.onmessage = (e) => {
       try {
         const entry = JSON.parse(e.data);
@@ -77,7 +79,7 @@ export default function ControlPanelPage() {
 
   const sendRcon = useCallback(async () => {
     if (!selectedServer || !rconCommand) return;
-    const res = await fetch(`${API_BASE}/servers/${selectedServer.id}/rcon`, {
+    const res = await api(`/servers/${selectedServer.id}/rcon`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ command: rconCommand, admin_user: 'Admin' }),
@@ -90,7 +92,7 @@ export default function ControlPanelPage() {
   const handleAddServer = useCallback(async () => {
     setSubmitting(true);
     setError('');
-    const res = await fetch(`${API_BASE}/servers`, {
+    const res = await api(`/servers`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...form, rcon_port: form.rcon_port || 28016 }),
@@ -110,7 +112,7 @@ export default function ControlPanelPage() {
     if (!selectedServer) return;
     setServerStateLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/servers/${selectedServer.id}/server-state`);
+      const res = await api(`/servers/${selectedServer.id}/server-state`);
       const data = await res.json();
       if (!data.error) setServerState(data);
     } catch {}
@@ -120,7 +122,7 @@ export default function ControlPanelPage() {
   const execPlayerAction = useCallback(async (playerName: string, action: string, msg?: string) => {
     if (!selectedServer) return;
     try {
-      const res = await fetch(`${API_BASE}/servers/${selectedServer.id}/player-action`, {
+      const res = await api(`/servers/${selectedServer.id}/player-action`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ player_name: playerName, action, message: msg || '', admin_user: 'Admin' }),
       });
@@ -134,7 +136,7 @@ export default function ControlPanelPage() {
   const execDisbandSquad = useCallback(async (teamId: number, squadId: string) => {
     if (!selectedServer) return;
     try {
-      await fetch(`${API_BASE}/servers/${selectedServer.id}/disband-squad/${teamId}/${squadId}`, { method: 'DELETE' });
+      await api(`/servers/${selectedServer.id}/disband-squad/${teamId}/${squadId}`, { method: 'DELETE' });
       setActionMsg('小队已解散');
       setTimeout(() => setActionMsg(''), 3000);
       fetchServerState();
@@ -151,7 +153,7 @@ export default function ControlPanelPage() {
     setDeleting(true);
     setDeleteError('');
     try {
-      const res = await fetch(`${API_BASE}/servers/${deleteTarget.id}`, { method: 'DELETE' });
+      const res = await api(`/servers/${deleteTarget.id}`, { method: 'DELETE' });
       if (res.ok) {
         setServers(prev => {
           const remaining = prev.filter(s => s.id !== deleteTarget.id);

@@ -15,16 +15,29 @@ pub struct AuthenticatedUser {
     pub permissions: serde_json::Value,
 }
 
+fn extract_token_from_query(uri: &axum::http::Uri) -> Option<String> {
+    uri.query().and_then(|q| {
+        q.split('&')
+            .find(|p| p.starts_with("token="))
+            .map(|p| p[6..].to_string())
+            .filter(|t| !t.is_empty())
+    })
+}
+
 /// 认证中间件：验证 JWT 并将用户信息注入 request extensions
+/// 支持两种 token 传递方式：Authorization: Bearer 头（常规 API）和 ?token= 查询参数（WebSocket 降级）
 pub async fn require_auth(
     Extension(secret): Extension<String>,
     mut request: axum::http::Request<axum::body::Body>,
     next: Next,
 ) -> Result<Response, StatusCode> {
+    // 1. 优先从 Authorization 头获取
     let token = request.headers().get("Authorization")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .map(|s| s.to_string())
+        // 2. 降级到 URL 查询参数（用于浏览器 WebSocket 连接）
+        .or_else(|| extract_token_from_query(request.uri()))
         .unwrap_or_default();
 
     if token.is_empty() {

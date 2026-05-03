@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 
-const API_BASE = '/api/v1';
+import { api } from '../../lib/api';
 
 export default function ChatLogsPage() {
   const [servers, setServers] = useState<{ id: number; name: string }[]>([]);
@@ -13,14 +13,14 @@ export default function ChatLogsPage() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    fetch(`${API_BASE}/servers`).then(r => r.json())
+    api(`/servers`).then(r => r.json())
       .then(d => { setServers(d.data || []); if (d.data?.length > 0) setServerId(d.data[0].id); })
       .catch(() => {});
   }, []);
 
   useEffect(() => {
     if (!serverId) return; setLoading(true);
-    fetch(`${API_BASE}/servers/${serverId}/chat-messages?page=${page}&per_page=100`).then(r => r.json())
+    api(`/servers/${serverId}/chat-messages?page=${page}&per_page=100`).then(r => r.json())
       .then(d => { setMessages(d.data || []); setTotal(d.total || 0); setLoading(false); }).catch(() => setLoading(false));
   }, [serverId, page]);
 

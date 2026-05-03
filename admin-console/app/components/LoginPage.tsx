@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 
-const API_BASE = '/api/v1';
+import { api } from '../lib/api';
 
 interface Props {
   onLogin: (token: string, username: string, role: string) => void;
@@ -20,7 +20,7 @@ export default function LoginPage({ onLogin }: Props) {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch(`${API_BASE}/auth/login`, {
+      const res = await api(`/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password }),

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 
-const API_BASE = '/api/v1';
+import { api } from '../../lib/api';
 
 const LOG_TYPE_TABS = [
   { id: '', label: '全部' },
@@ -21,7 +21,7 @@ export default function ActionLogsPage() {
   useEffect(() => {
     setLoading(true); setPage(1);
     const qs = logType ? `?log_type=${logType}` : '';
-    fetch(`${API_BASE}/operation-logs${qs}`).then(r => r.json())
+    api(`/operation-logs${qs}`).then(r => r.json())
       .then(d => { setLogs(d.data || []); setTotal(d.total || 0); setLoading(false); })
       .catch(() => setLoading(false));
   }, [logType]);
@@ -30,7 +30,7 @@ export default function ActionLogsPage() {
     if (page === 1) return;
     setLoading(true);
     const qs = logType ? `?log_type=${logType}&page=${page}` : `?page=${page}`;
-    fetch(`${API_BASE}/operation-logs${qs}`).then(r => r.json())
+    api(`/operation-logs${qs}`).then(r => r.json())
       .then(d => { setLogs(d.data || []); setLoading(false); })
       .catch(() => setLoading(false));
   }, [page]);

@@ -2,16 +2,25 @@ use futures_util::{SinkExt, StreamExt};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tokio_tungstenite::connect_async;
+use tokio_tungstenite::tungstenite::http::Request;
 use crate::protocol::AgentMessage;
 
 pub async fn run(
     ws_url: String,
+    token: String,
     msg_tx: mpsc::UnboundedSender<AgentMessage>,
     msg_rx: Arc<Mutex<mpsc::UnboundedReceiver<AgentMessage>>>,
 ) {
     loop {
         tracing::info!("连接后端: {}", ws_url);
-        match connect_async(ws_url.as_str()).await {
+
+        let request = Request::builder()
+            .uri(&ws_url)
+            .header("X-Auth-Token", &token)
+            .body(())
+            .expect("构建 WebSocket 请求失败");
+
+        match connect_async(request).await {
             Ok((ws_stream, _)) => {
                 tracing::info!("已连接至后端");
                 let (mut write, mut read) = ws_stream.split();

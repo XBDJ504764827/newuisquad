@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 
-const API_BASE = '/api/v1';
+import { api } from '../../lib/api';
 
 interface FileInfo {
   name: string;
@@ -23,7 +23,7 @@ export default function ConfigFilePage() {
   const [modified, setModified] = useState(false);
 
   useEffect(() => {
-    fetch(`${API_BASE}/servers`)
+    api(`/servers`)
       .then(r => r.json())
       .then(data => {
         setServers(data.data || []);
@@ -37,7 +37,7 @@ export default function ConfigFilePage() {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch(`${API_BASE}/servers/${selectedServerId}/files/list`);
+      const res = await api(`/servers/${selectedServerId}/files/list`);
       const data = await res.json();
       if (data.error) {
         setError(data.error);
@@ -67,7 +67,7 @@ export default function ConfigFilePage() {
     setError('');
     setSuccess('');
     try {
-      const res = await fetch(`${API_BASE}/servers/${selectedServerId}/files?path=${encodeURIComponent(filename)}`);
+      const res = await api(`/servers/${selectedServerId}/files?path=${encodeURIComponent(filename)}`);
       const data = await res.json();
       if (data.error) {
         setError(data.error);
@@ -90,7 +90,7 @@ export default function ConfigFilePage() {
     setError('');
     setSuccess('');
     try {
-      const res = await fetch(`${API_BASE}/servers/${selectedServerId}/files`, {
+      const res = await api(`/servers/${selectedServerId}/files`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path: selectedFile, content, admin_user: 'Admin' }),

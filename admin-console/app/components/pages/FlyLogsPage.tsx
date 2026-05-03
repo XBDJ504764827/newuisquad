@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 
-const API_BASE = '/api/v1';
+import { api } from '../../lib/api';
 
 interface FlyEvent { id: number; player_name: string; eos_id: string; steam64: string; event_type: string; logged_at: string; }
 
@@ -19,14 +19,14 @@ export default function FlyLogsPage() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    fetch(`${API_BASE}/servers`).then(r => r.json())
+    api(`/servers`).then(r => r.json())
       .then(d => { setServers(d.data || []); if (d.data?.length > 0) setServerId(d.data[0].id); })
       .catch(() => {});
   }, []);
 
   useEffect(() => {
     if (!serverId) return; setLoading(true);
-    fetch(`${API_BASE}/servers/${serverId}/fly-events?page=${page}&per_page=50`).then(r => r.json())
+    api(`/servers/${serverId}/fly-events?page=${page}&per_page=50`).then(r => r.json())
       .then(d => { setEvents(d.data || []); setTotal(d.total || 0); setLoading(false); }).catch(() => setLoading(false));
   }, [serverId, page]);
 

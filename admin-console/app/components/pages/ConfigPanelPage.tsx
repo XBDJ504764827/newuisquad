@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 
-const API_BASE = '/api/v1';
+import { api } from '../../lib/api';
 
 const configTabs = [
   { id: 'tab-1', label: '快捷设置' },
@@ -96,7 +96,7 @@ export default function ConfigPanelPage() {
   const showSuccess = (msg: string) => { setSuccessMsg(msg); setTimeout(() => setSuccessMsg(''), 3000); };
 
   useEffect(() => {
-    fetch(`${API_BASE}/servers`)
+    api(`/servers`)
       .then(r => r.json())
       .then(data => {
         setServers(data.data || []);
@@ -109,7 +109,7 @@ export default function ConfigPanelPage() {
   useEffect(() => {
     if (!selectedServerId) return;
     setTkLoading(true);
-    fetch(`${API_BASE}/servers/${selectedServerId}/tk-settings`)
+    api(`/servers/${selectedServerId}/tk-settings`)
       .then(r => r.json())
       .then(data => {
         setTkSettings(data);
@@ -119,39 +119,39 @@ export default function ConfigPanelPage() {
       .catch(() => setTkLoading(false));
     // 加载 AFK 设置
     setAfkLoading(true);
-    fetch(`${API_BASE}/servers/${selectedServerId}/afk-settings`)
+    api(`/servers/${selectedServerId}/afk-settings`)
       .then(r => r.json())
       .then(data => { setAfkForm({ enabled: data.enabled, min_players_to_check: data.min_players_to_check, max_afk_minutes: data.max_afk_minutes }); setAfkLoading(false); })
       .catch(() => setAfkLoading(false));
     // 加载广播设置
     setBcLoading(true);
-    fetch(`${API_BASE}/servers/${selectedServerId}/broadcast-settings`)
+    api(`/servers/${selectedServerId}/broadcast-settings`)
       .then(r => r.json())
       .then(data => { setBcForm({ join_message_enabled: data.join_message_enabled, join_message: data.join_message, gameop_list_enabled: data.gameop_list_enabled, gameop_list_message: data.gameop_list_message, announcement_enabled: data.announcement_enabled, announcement_content: data.announcement_content || '', announcement_interval: data.announcement_interval }); setBcLoading(false); })
       .catch(() => setBcLoading(false));
-    fetch(`${API_BASE}/servers/${selectedServerId}/announcements`).then(r => r.json()).then(d => setAnnouncements(d.data || [])).catch(() => {});
-    fetch(`${API_BASE}/servers/${selectedServerId}/auto-replies`).then(r => r.json()).then(d => setAutoReplies(d.data || [])).catch(() => {});
+    api(`/servers/${selectedServerId}/announcements`).then(r => r.json()).then(d => setAnnouncements(d.data || [])).catch(() => {});
+    api(`/servers/${selectedServerId}/auto-replies`).then(r => r.json()).then(d => setAutoReplies(d.data || [])).catch(() => {});
     // 加载队伍设置
     setTeamLoading(true);
-    fetch(`${API_BASE}/servers/${selectedServerId}/team-settings`).then(r => r.json())
+    api(`/servers/${selectedServerId}/team-settings`).then(r => r.json())
       .then(d => { setTeamForm({ create_team_broadcast: d.create_team_broadcast, captain_time_check: d.captain_time_check, captain_min_playtime: d.captain_min_playtime, captain_check_min_players: d.captain_check_min_players, max_create_team_attempts: d.max_create_team_attempts }); setTeamLoading(false); })
       .catch(() => setTeamLoading(false));
     // 加载暖服设置
     setSeedLoading(true);
-    fetch(`${API_BASE}/servers/${selectedServerId}/seed-settings`).then(r => r.json())
+    api(`/servers/${selectedServerId}/seed-settings`).then(r => r.json())
       .then(d => { const f: Record<string, boolean | number> = { enabled: d.enabled, player_threshold: d.player_threshold, vehicle_claim: d.vehicle_claim, vehicle_fill: d.vehicle_fill, deploy_restrict: d.deploy_restrict, kit_restrict: d.kit_restrict, heavy_vehicle_require: d.heavy_vehicle_require, respawn_timer: d.respawn_timer, use_enemy_vehicle: d.use_enemy_vehicle }; setSeedForm(f as any); setSeedLoading(false); })
       .catch(() => setSeedLoading(false));
     // 加载伤害通知设置
     setDamageNotifyLoading(true);
-    fetch(`${API_BASE}/servers/${selectedServerId}/damage-notify-settings`).then(r => r.json())
+    api(`/servers/${selectedServerId}/damage-notify-settings`).then(r => r.json())
       .then(d => { setDamageNotifyForm({ enabled: d.enabled, keyword: d.keyword || '!damage' }); setDamageNotifyLoading(false); })
       .catch(() => setDamageNotifyLoading(false));
     // 加载异常伤害设置
     setAbDamageLoading(true);
-    fetch(`${API_BASE}/servers/${selectedServerId}/abnormal-damage-config`).then(r => r.json())
+    api(`/servers/${selectedServerId}/abnormal-damage-config`).then(r => r.json())
       .then(d => { setAbDamageEnabled(d.enabled); setAbDamageLoading(false); })
       .catch(() => setAbDamageLoading(false));
-    fetch(`${API_BASE}/servers/${selectedServerId}/abnormal-damage-rules`).then(r => r.json())
+    api(`/servers/${selectedServerId}/abnormal-damage-rules`).then(r => r.json())
       .then(d => setAbDamageRules(d.data || []))
       .catch(() => {});
     // 加载异常伤害日志
@@ -162,7 +162,7 @@ export default function ConfigPanelPage() {
     if (!selectedServerId) return;
     setTkSaving(true);
     setTkError('');
-    const res = await fetch(`${API_BASE}/servers/${selectedServerId}/tk-settings`, {
+    const res = await api(`/servers/${selectedServerId}/tk-settings`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(tkForm),
@@ -174,42 +174,42 @@ export default function ConfigPanelPage() {
 
   const saveAfkSettings = useCallback(async () => {
     if (!selectedServerId) return; setAfkSaving(true); setAfkError('');
-    const res = await fetch(`${API_BASE}/servers/${selectedServerId}/afk-settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(afkForm) });
+    const res = await api(`/servers/${selectedServerId}/afk-settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(afkForm) });
     const data = await res.json(); setAfkSaving(false);
     if (data.error) { setAfkError(data.error); } else { showSuccess('挂机设置已保存'); }
   }, [selectedServerId, afkForm]);
 
   const saveBroadcast = useCallback(async () => {
     if (!selectedServerId) return; setBcSaving(true); setBcError('');
-    const res = await fetch(`${API_BASE}/servers/${selectedServerId}/broadcast-settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(bcForm) });
+    const res = await api(`/servers/${selectedServerId}/broadcast-settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(bcForm) });
     const data = await res.json(); setBcSaving(false);
     if (data.error) { setBcError(data.error); } else { showSuccess('广播设置已保存'); }
   }, [selectedServerId, bcForm]);
 
   const saveTeamSettings = useCallback(async () => {
     if (!selectedServerId) return; setTeamSaving(true); setTeamError('');
-    const res = await fetch(`${API_BASE}/servers/${selectedServerId}/team-settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(teamForm) });
+    const res = await api(`/servers/${selectedServerId}/team-settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(teamForm) });
     const data = await res.json(); setTeamSaving(false);
     if (data.error) setTeamError(data.error); else showSuccess('队伍设置已保存');
   }, [selectedServerId, teamForm]);
 
   const saveSeedSettings = useCallback(async () => {
     if (!selectedServerId) return; setSeedSaving(true); setSeedError('');
-    const res = await fetch(`${API_BASE}/servers/${selectedServerId}/seed-settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(seedForm) });
+    const res = await api(`/servers/${selectedServerId}/seed-settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(seedForm) });
     const data = await res.json(); setSeedSaving(false);
     if (data.error) setSeedError(data.error); else showSuccess('暖服设置已保存');
   }, [selectedServerId, seedForm]);
 
   const saveDamageNotifySettings = useCallback(async () => {
     if (!selectedServerId) return; setDamageNotifySaving(true); setDamageNotifyError('');
-    const res = await fetch(`${API_BASE}/servers/${selectedServerId}/damage-notify-settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(damageNotifyForm) });
+    const res = await api(`/servers/${selectedServerId}/damage-notify-settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(damageNotifyForm) });
     const data = await res.json(); setDamageNotifySaving(false);
     if (data.error) setDamageNotifyError(data.error); else showSuccess('伤害通知设置已保存');
   }, [selectedServerId, damageNotifyForm]);
 
   const saveAbDamageConfig = useCallback(async () => {
     if (!selectedServerId) return; setAbDamageSaving(true); setAbDamageError('');
-    const res = await fetch(`${API_BASE}/servers/${selectedServerId}/abnormal-damage-config`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: abDamageEnabled }) });
+    const res = await api(`/servers/${selectedServerId}/abnormal-damage-config`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: abDamageEnabled }) });
     const data = await res.json(); setAbDamageSaving(false);
     if (data.error) setAbDamageError(data.error); else showSuccess('异常伤害设置已保存');
   }, [selectedServerId, abDamageEnabled]);
@@ -218,7 +218,7 @@ export default function ConfigPanelPage() {
     if (!selectedServerId || !newAbDamage) return;
     const v = parseInt(newAbDamage);
     if (!v || v <= 0) return;
-    const res = await fetch(`${API_BASE}/servers/${selectedServerId}/abnormal-damage-rules`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ max_damage: v }) });
+    const res = await api(`/servers/${selectedServerId}/abnormal-damage-rules`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ max_damage: v }) });
     const data = await res.json();
     setAbDamageRules(prev => [...prev, data]);
     setNewAbDamage('');
@@ -226,7 +226,7 @@ export default function ConfigPanelPage() {
   }, [selectedServerId, newAbDamage]);
 
   const delAbDamageRule = useCallback(async (id: number) => {
-    await fetch(`${API_BASE}/servers/${selectedServerId}/abnormal-damage-rules/${id}`, { method: 'DELETE' });
+    await api(`/servers/${selectedServerId}/abnormal-damage-rules/${id}`, { method: 'DELETE' });
     setAbDamageRules(prev => prev.filter(r => r.id !== id));
     showSuccess('伤害阈值已删除');
   }, [selectedServerId]);
@@ -237,7 +237,7 @@ export default function ConfigPanelPage() {
     const params = new URLSearchParams({ limit: '200' });
     if (playerName) params.set('player_name', playerName);
     try {
-      const res = await fetch(`${API_BASE}/servers/${selectedServerId}/abnormal-damage-logs?${params}`);
+      const res = await api(`/servers/${selectedServerId}/abnormal-damage-logs?${params}`);
       const data = await res.json();
       setAbDamageLogs(data.data || []);
     } catch {}
@@ -250,7 +250,7 @@ export default function ConfigPanelPage() {
 
   const addAnnouncement = useCallback(async () => {
     if (!selectedServerId || !newAnn.content) return;
-    const res = await fetch(`${API_BASE}/servers/${selectedServerId}/announcements`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newAnn) });
+    const res = await api(`/servers/${selectedServerId}/announcements`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newAnn) });
     const data = await res.json();
     setAnnouncements(prev => [...prev, data]);
     setNewAnn({ content: '', interval_minutes: 10 });
@@ -258,14 +258,14 @@ export default function ConfigPanelPage() {
   }, [selectedServerId, newAnn]);
 
   const delAnnouncement = useCallback(async (id: number) => {
-    await fetch(`${API_BASE}/servers/${selectedServerId}/announcements/${id}`, { method: 'DELETE' });
+    await api(`/servers/${selectedServerId}/announcements/${id}`, { method: 'DELETE' });
     setAnnouncements(prev => prev.filter(a => a.id !== id));
     showSuccess('通告已删除');
   }, [selectedServerId]);
 
   const addAutoReply = useCallback(async () => {
     if (!selectedServerId || !newReply.keyword || !newReply.reply_message) return;
-    const res = await fetch(`${API_BASE}/servers/${selectedServerId}/auto-replies`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newReply) });
+    const res = await api(`/servers/${selectedServerId}/auto-replies`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newReply) });
     const data = await res.json();
     setAutoReplies(prev => [...prev, data]);
     setNewReply({ keyword: '', reply_message: '' });
@@ -273,7 +273,7 @@ export default function ConfigPanelPage() {
   }, [selectedServerId, newReply]);
 
   const delAutoReply = useCallback(async (id: number) => {
-    await fetch(`${API_BASE}/servers/${selectedServerId}/auto-replies/${id}`, { method: 'DELETE' });
+    await api(`/servers/${selectedServerId}/auto-replies/${id}`, { method: 'DELETE' });
     setAutoReplies(prev => prev.filter(r => r.id !== id));
     showSuccess('自动回复规则已删除');
   }, [selectedServerId]);
