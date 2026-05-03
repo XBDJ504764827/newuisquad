@@ -17,12 +17,19 @@ pub struct SquadInfo {
     pub name: String,
     pub creator: String,
     pub team_id: i32,
+    pub squad_id: String,
+}
+
+#[derive(serde::Serialize)]
+pub struct TeamInfo {
+    pub team_id: i32,
+    pub faction: String,
 }
 
 pub struct ServerState {
     pub players: Vec<PlayerInfo>,
     pub squads: Vec<SquadInfo>,
-    pub teams: Vec<String>,
+    pub teams: Vec<TeamInfo>,
     pub map_name: String,
     pub game_mode: String,
 }
@@ -99,19 +106,56 @@ pub async fn get_server_info(ip: &str, port: u16, password: &str) -> Result<Serv
     Ok(parse_server_info(&raw, &next_map, &next_layer))
 }
 
-/// 获取完整服务器状态（含 ban/warn/server info）
+/// 获取完整服务器状态（含玩家、小队、阵营名称）
 pub async fn get_server_state(ip: &str, port: u16, password: &str) -> Result<ServerState, String> {
     let players = list_players(ip, port, password).await.unwrap_or_default();
     let squads = list_squads(ip, port, password).await.unwrap_or_default();
     let (map_name, game_mode) = get_map(ip, port, password).await.unwrap_or_default();
 
-    let teams = players.iter()
-        .filter_map(|p| if p.team_id == 1 { Some("US Army".to_string()) } else if p.team_id == 2 { Some("RUS".to_string()) } else { None })
-        .collect::<std::collections::HashSet<_>>()
-        .into_iter()
-        .collect();
+    // 从 ListSquads 原始响应中解析阵营名称
+    let mut rcon = SquadRcon::connect(ip, port, password).await?;
+    let squads_raw = rcon.execute("ListSquads").await.unwrap_or_default();
+    let teams = parse_team_names(&squads_raw, &players);
 
     Ok(ServerState { players, squads, teams, map_name, game_mode })
+}
+
+/// 从 ListSquads 原始响应中解析阵营名称，兜底从玩家数据推断
+fn parse_team_names(raw: &str, players: &[PlayerInfo]) -> Vec<TeamInfo> {
+    let mut teams: Vec<TeamInfo> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    // 解析 "Team ID: 1 (US Army)" 格式
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.to_lowercase().starts_with("team id:") {
+            let after = line.split(':').nth(1).unwrap_or("").trim();
+            if let Some(p) = after.find('(') {
+                if let Ok(id) = after[..p].trim().parse::<i32>() {
+                    let faction = after[p + 1..].trim_end_matches(')').to_string();
+                    if seen.insert(id) {
+                        teams.push(TeamInfo { team_id: id, faction });
+                    }
+                }
+            }
+        }
+    }
+
+    // 兜底：从玩家数据中提取队伍 ID，使用占位名称
+    for p in players {
+        if p.team_id == 0 || seen.contains(&p.team_id) { continue; }
+        seen.insert(p.team_id);
+        teams.push(TeamInfo { team_id: p.team_id, faction: format!("队伍 {}", p.team_id) });
+    }
+
+    // 确保 team 1 和 2 始终存在
+    for tid in [1i32, 2] {
+        if !seen.contains(&tid) {
+            teams.push(TeamInfo { team_id: tid, faction: format!("队伍 {}", tid) });
+        }
+    }
+    teams.sort_by_key(|t| t.team_id);
+    teams
 }
 
 fn parse_list_players(raw: &str) -> Vec<PlayerInfo> {
@@ -160,24 +204,45 @@ fn parse_list_squads(raw: &str) -> Vec<SquadInfo> {
     for line in raw.lines() {
         let line = line.trim();
         if line.is_empty() { continue; }
-        // 团队行: Team 1 (US Army):
-        if line.to_lowercase().starts_with("team ") {
+        // 团队行: Team ID: 1 (faction) 或旧格式 Team 1 (faction):
+        if line.to_lowercase().starts_with("team id:") {
+            current_team = line.split_whitespace().nth(2).and_then(|s| s.parse().ok()).unwrap_or(0);
+            continue;
+        }
+        if line.to_lowercase().starts_with("team ") && !line.to_lowercase().starts_with("team id:") {
             if let Some(t) = line.split_whitespace().nth(1) {
-                current_team = t.trim_end_matches(':').parse().unwrap_or(0);
+                current_team = t.trim_end_matches(':').trim_end_matches(')').parse().unwrap_or(0);
             }
             continue;
         }
-        // 小队行: Squad 1: Alpha - CreatorName
-        if line.to_lowercase().starts_with("squad ") || line.contains(':') {
+        // 旧格式: Squad 1: Alpha - CreatorName
+        if line.to_lowercase().starts_with("squad ") {
             let parts: Vec<&str> = line.splitn(2, ':').collect();
             if parts.len() == 2 {
+                let squad_id = parts[0].strip_prefix("Squad ").unwrap_or(parts[0]).trim().to_string();
                 let name_part = parts[1].trim();
                 let (squad_name, creator) = if let Some(pos) = name_part.find(" - ") {
                     (name_part[..pos].trim().to_string(), name_part[pos + 3..].trim().to_string())
                 } else {
                     (name_part.to_string(), String::new())
                 };
-                squads.push(SquadInfo { name: squad_name, creator, team_id: current_team });
+                squads.push(SquadInfo { name: squad_name, creator, team_id: current_team, squad_id });
+            }
+        }
+        // 新格式: ID: 1 | Name: 老年团 | Size: 1 |
+        if line.starts_with("ID: ") {
+            let mut squad_id = String::new();
+            let mut name = String::new();
+            for part in line.split('|') {
+                let v = part.trim();
+                if let Some(id_val) = v.strip_prefix("ID: ") {
+                    squad_id = id_val.to_string();
+                } else if let Some(n) = v.strip_prefix("Name: ") {
+                    name = n.to_string();
+                }
+            }
+            if !squad_id.is_empty() {
+                squads.push(SquadInfo { name, creator: String::new(), team_id: current_team, squad_id });
             }
         }
     }

@@ -106,26 +106,41 @@ export default function ControlPanelPage() {
         if (!selectedServer) return;
         setServerStateLoading(true);
         try {
-            const data = await api(`/servers/${selectedServer.id}/server-state`).then(r => r.json());
+            const res = await api(`/servers/${selectedServer.id}/server-state`);
+            console.log('[fetchServerState] HTTP状态:', res.status);
+            const text = await res.text();
+            console.log('[fetchServerState] 原始响应:', text.substring(0, 500));
+            const data = JSON.parse(text);
+            console.log('[fetchServerState] 解析结果:', { hasError: !!data.error, players: data.players?.length, squads: data.squads?.length, teams: data.teams });
             if (!data.error) {
                 setServerState(data);
-                // 如果 server-state 包含服务器信息，同步更新 serverInfo
-                if (data.server_name || data.player_count !== undefined) {
-                    setServerInfo(prev => ({
-                        ...prev,
-                        server_name: data.server_name || prev?.server_name || '',
-                        player_count: data.player_count ?? prev?.player_count ?? 0,
-                        max_players: data.max_players ?? prev?.max_players ?? 0,
-                        map_name: data.map_name || prev?.map_name || '',
-                        game_mode: data.game_mode || prev?.game_mode || '',
-                        next_map: data.next_map || prev?.next_map || '',
-                        next_layer: '',
-                    }));
-                }
+                setServerInfo(prev => ({
+                    ...prev,
+                    server_name: data.server_name || prev?.server_name || '',
+                    player_count: data.player_count ?? prev?.player_count ?? 0,
+                    max_players: data.max_players ?? prev?.max_players ?? 0,
+                    map_name: data.map_name || prev?.map_name || '',
+                    game_mode: data.game_mode || prev?.game_mode || '',
+                    next_map: data.next_map || prev?.next_map || '',
+                    next_layer: '',
+                }));
+            } else {
+                console.warn('[fetchServerState] 服务端错误:', data.error);
             }
-        } catch { }
+        } catch (e) { console.error('[fetchServerState] 请求失败', e); }
         setServerStateLoading(false);
     }, [selectedServer]);
+
+    // 调试：监控 serverState 变化
+    useEffect(() => {
+        console.log('[ControlPanel] serverState 更新:', {
+            hasState: !!serverState,
+            players: (serverState as any)?.players?.length,
+            squads: (serverState as any)?.squads?.length,
+            teams: (serverState as any)?.teams,
+            selectedServer: selectedServer?.id,
+        });
+    }, [serverState, selectedServer]);
 
     const fetchBansWarns = useCallback(async () => {
         if (!selectedServer) return;
@@ -134,7 +149,18 @@ export default function ControlPanelPage() {
                 api(`/servers/${selectedServer.id}/bans`).then(r => r.json()), api(`/servers/${selectedServer.id}/warns`).then(r => r.json()), api(`/servers/${selectedServer.id}/server-info`).then(r => r.json()),
             ]);
             setBans(bRes.data || []); setWarns(wRes.data || []);
-            if (!iRes.error) setServerInfo(iRes);
+            if (!iRes.error) {
+                setServerInfo(prev => ({
+                    ...prev,
+                    server_name: iRes.server_name || prev?.server_name || '',
+                    player_count: iRes.player_count ?? prev?.player_count ?? 0,
+                    max_players: iRes.max_players ?? prev?.max_players ?? 0,
+                    map_name: iRes.map_name || prev?.map_name || '',
+                    game_mode: iRes.game_mode || prev?.game_mode || '',
+                    next_map: iRes.next_map || prev?.next_map || '',
+                    next_layer: iRes.next_layer || prev?.next_layer || '',
+                }));
+            }
         } catch { }
     }, [selectedServer]);
 
@@ -147,7 +173,7 @@ export default function ControlPanelPage() {
     // 定时轮询
     useEffect(() => {
         if (!autoRefresh || !selectedServer) return;
-        const timer = setInterval(() => { fetchServerState(); fetchBansWarns(); }, 10000);
+        const timer = setInterval(() => { fetchServerState(); fetchBansWarns(); }, 3000);
         return () => clearInterval(timer);
     }, [autoRefresh, selectedServer, fetchServerState, fetchBansWarns]);
 
@@ -335,16 +361,32 @@ export default function ControlPanelPage() {
                                                 const ts = (serverState.squads || []).filter((s: any) => s.team_id === teamId);
                                                 const sp = (sid: string | null) => tp.filter((p: any) => p.squad_id === sid);
                                                 const us = tp.filter((p: any) => !p.squad_id);
+                                                // 找出有 squad_id 但 squad 列表里不存在的孤立玩家
+                                                const orphanSquadIds = new Set<string>();
+                                                tp.forEach((p: any) => {
+                                                    if (p.squad_id && !ts.some((s: any) => s.squad_id === p.squad_id)) {
+                                                        orphanSquadIds.add(p.squad_id);
+                                                    }
+                                                });
                                                 return (
                                                     <div key={teamId} style={{ maxHeight: 400, overflowY: 'auto' }}>
                                                         {ts.map((sq: any) => (
                                                             <div key={sq.name} style={{ borderBottom: '1px solid var(--border)' }}>
                                                                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 12px', background: 'var(--bg3)', fontSize: 12 }}>
                                                                     <strong>{sq.name}</strong>
-                                                                    <span style={{ color: 'var(--text3)', fontSize: 11 }}>{sq.creator} ({sp(sq.name).length})</span>
-                                                                    <span className="badge red" style={{ cursor: 'pointer', fontSize: 9 }} onClick={() => { if (confirm(`解散 ${sq.name}?`)) execDisbandSquad(teamId, sq.name); }}>解散</span>
+                                                                    <span style={{ color: 'var(--text3)', fontSize: 11 }}>{sq.creator} ({sp(sq.squad_id).length})</span>
+                                                                    <span className="badge red" style={{ cursor: 'pointer', fontSize: 9 }} onClick={() => { if (confirm(`解散 ${sq.name}?`)) execDisbandSquad(teamId, sq.squad_id); }}>解散</span>
                                                                 </div>
-                                                                <PlayerTable players={sp(sq.name)} onAction={execPlayerAction} />
+                                                                <PlayerTable players={sp(sq.squad_id)} onAction={execPlayerAction} />
+                                                            </div>
+                                                        ))}
+                                                        {Array.from(orphanSquadIds).map(sid => (
+                                                            <div key={`orphan-${sid}`} style={{ borderBottom: '1px solid var(--border)' }}>
+                                                                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 12px', background: 'var(--bg3)', fontSize: 12 }}>
+                                                                    <strong>小队 {sid}</strong>
+                                                                    <span style={{ color: 'var(--text3)', fontSize: 11 }}>({sp(sid).length})</span>
+                                                                </div>
+                                                                <PlayerTable players={sp(sid)} onAction={execPlayerAction} />
                                                             </div>
                                                         ))}
                                                         {us.length > 0 && <div style={{ borderBottom: '1px solid var(--border)' }}><div style={{ padding: '6px 12px', background: 'var(--bg3)', fontSize: 12, color: 'var(--text3)' }}>未入队 ({us.length})</div><PlayerTable players={us} onAction={execPlayerAction} /></div>}
@@ -352,7 +394,12 @@ export default function ControlPanelPage() {
                                                 );
                                             })}
                                         </div>
-                                    ) : <div style={{ padding: 30, textAlign: 'center', color: 'var(--text3)' }}>点击刷新获取玩家列表</div>)}
+                                    ) : <div style={{ padding: 30, textAlign: 'center', color: 'var(--text3)' }}>
+                                        <p>点击刷新获取玩家列表</p>
+                                        <p style={{ fontSize: 10, marginTop: 8 }}>serverState: {JSON.stringify(serverState)}</p>
+                                        <p style={{ fontSize: 10 }}>selectedServer: {selectedServer?.id}</p>
+                                        <p style={{ fontSize: 10 }}>rightTab: {rightTab} | activeTab: {activeTab}</p>
+                                    </div>)}
                                     {activeTab === 'bans' && (bans.length > 0 ? <table style={{ width: '100%', fontSize: 12 }}><thead><tr style={{ borderBottom: '2px solid var(--border)' }}><th style={{ padding: '8px 12px', color: 'var(--text3)' }}>玩家</th><th style={{ padding: '8px 12px', color: 'var(--text3)' }}>时长</th><th style={{ padding: '8px 12px', color: 'var(--text3)' }}>原因</th></tr></thead><tbody>{bans.map((b, i) => <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}><td style={{ padding: '6px 12px' }}>{b.player_name}</td><td style={{ padding: '6px 12px' }}><span className="badge red">{b.duration}</span></td><td style={{ padding: '6px 12px', color: 'var(--text2)' }}>{b.reason}</td></tr>)}</tbody></table> : <div style={{ padding: 20, textAlign: 'center', color: 'var(--text3)' }}>✅ 无封禁</div>)}
                                     {activeTab === 'warns' && (warns.length > 0 ? <table style={{ width: '100%', fontSize: 12 }}><thead><tr style={{ borderBottom: '2px solid var(--border)' }}><th style={{ padding: '8px 12px', color: 'var(--text3)' }}>玩家</th><th style={{ padding: '8px 12px', color: 'var(--text3)' }}>原因</th></tr></thead><tbody>{warns.map((w, i) => <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}><td style={{ padding: '6px 12px' }}>{w.player_name}</td><td style={{ padding: '6px 12px', color: 'var(--text2)' }}>{w.reason}</td></tr>)}</tbody></table> : <div style={{ padding: 20, textAlign: 'center', color: 'var(--text3)' }}>✅ 无警告</div>)}
                                 </div>
@@ -454,6 +501,8 @@ function PlayerTable({ players, onAction }: { players: any[]; onAction: (name: s
                         <span className="badge gray" style={{ cursor: 'pointer', fontSize: 9 }} onClick={() => onAction(p.name, 'warn')}>警告</span>
                         <span className="badge red" style={{ cursor: 'pointer', fontSize: 9 }} onClick={() => { if (confirm(`踢出 ${p.name}?`)) onAction(p.name, 'kick', '管理员操作'); }}>踢出</span>
                         <span className="badge red" style={{ cursor: 'pointer', fontSize: 9 }} onClick={() => { if (confirm(`封禁 ${p.name}?`)) onAction(p.name, 'ban', '管理员操作'); }}>封禁</span>
+                        <span className="badge" style={{ cursor: 'pointer', fontSize: 9, background: 'var(--blue)', color: '#fff' }} onClick={() => { if (confirm(`强制 ${p.name} 跳边?`)) onAction(p.name, 'team_change'); }}>跳边</span>
+                        <span className="badge" style={{ cursor: 'pointer', fontSize: 9, background: '#f59e0b', color: '#000' }} onClick={() => { if (confirm(`将 ${p.name} 踢出小队?`)) onAction(p.name, 'squad_remove'); }}>踢出小队</span>
                     </div></td>
                 </tr>
             ))}</tbody>

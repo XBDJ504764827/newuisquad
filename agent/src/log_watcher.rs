@@ -49,15 +49,12 @@ pub fn start_watching(file_path: PathBuf, msg_tx: mpsc::UnboundedSender<AgentMes
                                 last_pos = file_len;
 
                                 if let Ok(content) = String::from_utf8(buf) {
-                                    let line_count = content.lines().count();
-                                    eprintln!("[LogWatcher] 检测到文件变化, 新增 {} 行", line_count);
                                     for line in content.lines() {
                                         let line = line.trim();
                                         if line.is_empty() {
                                             continue;
                                         }
                                         let entry = parse_log_line(line);
-                                        eprintln!("[LogWatcher] -> [{}] {}", entry.log_level, entry.message);
                                         if msg_tx.send(AgentMessage::Log { data: entry }).is_err() {
                                                             tracing::error!("日志行发送失败（通道已关闭）");
                                                             return;

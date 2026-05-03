@@ -43,11 +43,41 @@ pub async fn get_warns(
     }
 }
 
-/// 获取服务器基本信息
+/// 获取服务器基本信息（优先从 Agent 缓存读取）
 pub async fn get_server_info(
     State(state): State<AppState>,
     Path(server_id): Path<i32>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    // 优先从 Agent 缓存读取
+    if let Ok(cache) = state.server_states.read() {
+        if let Some(cached) = cache.get(&server_id.to_string()) {
+            let map = cached["map_name"].as_str().unwrap_or("");
+            let map_name = if map.is_empty() || map == "Unknown" || map.contains("not defined") {
+                "".to_string()
+            } else {
+                map.to_string()
+            };
+            let game_mode = cached["game_mode"].as_str().unwrap_or("").to_string();
+            let server_name = cached["server_name"].as_str().unwrap_or("").to_string();
+            let player_count = cached["player_count"].as_i64().unwrap_or(0) as i32;
+            let max_players = cached["max_players"].as_i64().unwrap_or(0) as i32;
+            let next_map = cached["next_map"].as_str().unwrap_or("").to_string();
+
+            if !server_name.is_empty() || player_count > 0 || !map_name.is_empty() {
+                return Ok(Json(serde_json::json!({
+                    "server_name": server_name,
+                    "player_count": player_count,
+                    "max_players": max_players,
+                    "map_name": map_name,
+                    "game_mode": game_mode,
+                    "next_map": next_map,
+                    "next_layer": "",
+                })));
+            }
+        }
+    }
+
+    // 回退到直接 RCON
     let row = sqlx::query_as::<_, (String, i32, String)>(
         "SELECT ip, rcon_port, rcon_password FROM servers WHERE id=$1"
     ).bind(server_id).fetch_optional(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -66,7 +96,9 @@ pub async fn get_server_state(
     // 优先从缓存读取（修复无效地图名）
     let cached = {
         let cache = state.server_states.read().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        cache.get(&server_id.to_string()).cloned()
+        let hit = cache.get(&server_id.to_string()).cloned();
+        tracing::info!(server_id, cache_hit = hit.is_some(), "查询服务器状态缓存");
+        hit
     };
     if let Some(mut val) = cached {
         let map = val["map_name"].as_str().unwrap_or("");
@@ -87,6 +119,7 @@ pub async fn get_server_state(
     }
 
     // 回退到直接 RCON
+    tracing::info!(server_id, "缓存未命中，回退到直接 RCON 查询");
     let row = sqlx::query_as::<_, (String, i32, String)>(
         "SELECT ip, rcon_port, rcon_password FROM servers WHERE id=$1"
     ).bind(server_id).fetch_optional(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -107,6 +140,7 @@ pub async fn get_server_state(
                 })).collect::<Vec<_>>(),
                 "squads": s.squads.iter().map(|s| serde_json::json!({
                     "name": s.name, "creator": s.creator, "team_id": s.team_id,
+                    "squad_id": s.squad_id,
                 })).collect::<Vec<_>>(),
                 "teams": s.teams,
                 "map_name": s.map_name,

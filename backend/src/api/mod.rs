@@ -20,6 +20,7 @@ pub mod operation_logs;
 pub mod auth;
 pub mod auth_middleware;
 pub mod chat;
+pub mod squadjs_report;
 
 use axum::{Router, routing::{get, post, put}};
 use axum::middleware::from_fn;
@@ -45,7 +46,8 @@ pub fn build_router(state: AppState) -> Router {
     let public = Router::new()
         .route("/api/v1/auth/login", post(auth::login))
         .route("/api/v1/auth/verify", post(auth::verify_token))
-        .route("/agent/connect", get(agent_ws::handler));
+        .route("/agent/connect", get(agent_ws::handler))
+        .route("/api/v1/servers/{id}/squadjs/update", post(squadjs_report::handler));
 
     // 受保护路由（需要 Bearer Token 认证）
     let protected = Router::new()

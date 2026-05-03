@@ -49,6 +49,10 @@ pub enum AgentMessage {
     WriteFile { request_id: String, path: String, content: String },
     #[serde(rename = "list_files")]
     ListFiles { request_id: String, dir: String },
+
+    // 后端 → Agent: 执行 RCON 命令
+    #[serde(rename = "send_rcon")]
+    SendRcon { command: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,6 +67,8 @@ pub struct PlayerState {
     pub score: i32,
     pub ping: i32,
     pub is_admin: bool,
+    #[serde(default)]
+    pub is_leader: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,6 +76,11 @@ pub struct SquadState {
     pub name: String,
     pub creator: String,
     pub team_id: i32,
+    pub squad_id: String,
+    #[serde(default)]
+    pub leader_name: Option<String>,
+    #[serde(default)]
+    pub leader_steam_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

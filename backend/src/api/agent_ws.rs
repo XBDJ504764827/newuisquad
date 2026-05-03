@@ -116,6 +116,7 @@ async fn handle_socket(
 ) {
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<AgentMessage>();
     let sid: i32 = server_id.parse().unwrap_or(0);
+    let rcon_cmd_tx = cmd_tx.clone();
     agent_pool
         .agents
         .write()
@@ -130,7 +131,9 @@ async fn handle_socket(
     let log_tx = agent_pool.log_tx();
     let pending = agent_pool.pending.clone();
 
+    use crate::services::team_switch::TeamSwitchManager;
     let mut recv_task = tokio::spawn(async move {
+        let mut ts_manager = TeamSwitchManager::new();
         while let Some(Ok(msg)) = ws_receiver.next().await {
             if let Ok(text) = msg.to_text() {
                 if let Ok(agent_msg) = serde_json::from_str::<AgentMessage>(text) {
@@ -205,6 +208,35 @@ async fn handle_socket(
                                     }
                                 }
                             }
+
+                            // 代码跳边：处理公共聊天
+                            if let Some(category) = &data.category {
+                                let is_public_chat = category == "Chat-All" || category == "Chat" || category == "ChatTeam" || category == "ChatSquad";
+                                if is_public_chat {
+                                    let parsed = data.message.split_once(": ");
+                                    if let Some((chat_player, chat_msg)) = parsed {
+                                        let cache = server_states.read().ok();
+                                        let state = cache.as_ref().and_then(|c| c.get(&sid.to_string()));
+                                        tracing::debug!(server_id = %sid, player = %chat_player, msg = %chat_msg, has_state = state.is_some(), "代码跳边: 处理聊天");
+                                        let commands = ts_manager.process_chat(
+                                            &sid.to_string(),
+                                            chat_player,
+                                            chat_msg,
+                                            state,
+                                        );
+                                        drop(cache);
+                                        if commands.is_empty() {
+                                            tracing::warn!(server_id = %sid, player = %chat_player, "代码跳边: 未生成任何命令");
+                                        }
+                                        for cmd in commands {
+                                            tracing::info!(server_id = %sid, player = %chat_player, "代码跳边: {}", cmd);
+                                            let _ = rcon_cmd_tx.send(AgentMessage::SendRcon { command: cmd });
+                                        }
+                                    } else {
+                                        tracing::debug!(server_id = %sid, category = ?data.category, msg = %data.message, "聊天消息格式无法解析");
+                                    }
+                                }
+                            }
                         }
                         AgentMessage::FileReadResult { request_id, .. }
                         | AgentMessage::FileWriteResult { request_id, .. }
@@ -219,15 +251,47 @@ async fn handle_socket(
                             let teams: Vec<serde_json::Value> = team_names.iter().map(|t| serde_json::json!({
                                 "team_id": t.team_id, "faction": t.faction,
                             })).collect();
+
+                            // 从玩家列表交叉参照找出小队长：is_leader=true 且有所属小队
+                            let squad_leaders: Vec<serde_json::Value> = players.iter()
+                                .filter(|p| p.is_leader)
+                                .filter_map(|p| {
+                                    p.squad_id.as_ref().map(|sid| serde_json::json!({
+                                        "name": p.name,
+                                        "steam_id": p.steam_id,
+                                        "team_id": p.team_id,
+                                        "squad_id": sid,
+                                    }))
+                                })
+                                .collect();
+
+                            let leader_map: std::collections::HashMap<String, &serde_json::Value> = squad_leaders.iter()
+                                .filter_map(|l| {
+                                    l["squad_id"].as_str().map(|sid| (sid.to_string(), l))
+                                })
+                                .collect();
+
                             let state = serde_json::json!({
                                 "players": players.iter().map(|p| serde_json::json!({
                                     "name": p.name, "steam_id": p.steam_id, "team_id": p.team_id,
                                     "squad_id": p.squad_id, "role": p.role, "kills": p.kills,
                                     "deaths": p.deaths, "score": p.score, "ping": p.ping, "is_admin": p.is_admin,
+                                    "is_leader": p.is_leader,
                                 })).collect::<Vec<_>>(),
-                                "squads": squads.iter().map(|s| serde_json::json!({
-                                    "name": s.name, "creator": s.creator, "team_id": s.team_id,
-                                })).collect::<Vec<_>>(),
+                                "squads": squads.iter().map(|s| {
+                                    let leader_from_player = leader_map.get(&s.squad_id);
+                                    let leader_name = s.leader_name.clone()
+                                        .or_else(|| leader_from_player.and_then(|l| l["name"].as_str().map(String::from)));
+                                    let leader_steam_id = s.leader_steam_id.clone()
+                                        .or_else(|| leader_from_player.and_then(|l| l["steam_id"].as_str().map(String::from)));
+                                    serde_json::json!({
+                                        "name": s.name, "creator": s.creator, "team_id": s.team_id,
+                                        "squad_id": s.squad_id,
+                                        "leader_name": leader_name,
+                                        "leader_steam_id": leader_steam_id,
+                                    })
+                                }).collect::<Vec<_>>(),
+                                "squad_leaders": squad_leaders,
                                 "teams": teams,
                                 "map_name": map_name, "game_mode": game_mode,
                                 "server_name": server_name, "player_count": player_count,
@@ -235,6 +299,9 @@ async fn handle_socket(
                             });
                             if let Ok(mut cache) = server_states.write() {
                                 cache.insert(sid.to_string(), state);
+                                tracing::debug!(server_id = %sid, "服务器状态已缓存");
+                            } else {
+                                tracing::error!(server_id = %sid, "服务器状态缓存写入失败（锁污染）");
                             }
                         }
                         _ => {}
