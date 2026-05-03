@@ -18,7 +18,7 @@ pub async fn create(pool: &PgPool, req: CreateAdminRequest) -> Result<AdminUser,
 }
 
 pub async fn update(pool: &PgPool, id: i32, req: UpdateAdminRequest) -> Result<Option<AdminUser>, String> {
-    let hash = req.password.map(|p| bcrypt::hash(&p, 10).unwrap());
+    let hash = req.password.map(|p| bcrypt::hash(&p, 10)).transpose().map_err(|e| format!("密码加密失败: {}", e))?;
     admin_user_repo::update(
         pool, id,
         req.username.as_deref(), hash.as_deref(),

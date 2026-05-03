@@ -10,6 +10,7 @@ pub struct Config {
     pub init_admin_username: String,
     pub init_admin_password: String,
     pub jwt_secret: String,
+    pub allowed_origin: String,
 }
 
 impl Config {
@@ -30,6 +31,7 @@ impl Config {
             init_admin_username: env::var("INIT_ADMIN_USERNAME").unwrap_or_else(|_| "admin".into()),
             init_admin_password: env::var("INIT_ADMIN_PASSWORD").unwrap_or_else(|_| "admin123".into()),
             jwt_secret: env::var("JWT_SECRET").unwrap_or_else(|_| "change-me-in-production".into()),
+            allowed_origin: env::var("ALLOWED_ORIGIN").unwrap_or_else(|_| "*".into()),
         }
     }
 }

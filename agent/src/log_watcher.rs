@@ -37,9 +37,15 @@ pub fn start_watching(file_path: PathBuf, msg_tx: mpsc::UnboundedSender<AgentMes
                         if let Ok(meta) = file.metadata() {
                             let file_len = meta.len();
                             if file_len > last_pos {
-                                let _ = file.seek(SeekFrom::Start(last_pos));
+                                if file.seek(SeekFrom::Start(last_pos)).is_err() {
+                                    tracing::error!("日志文件 seek 失败");
+                                    continue;
+                                }
                                 let mut buf = vec![0u8; (file_len - last_pos) as usize];
-                                let _ = file.read_exact(&mut buf);
+                                if file.read_exact(&mut buf).is_err() {
+                                    tracing::error!("日志文件读取失败");
+                                    continue;
+                                }
                                 last_pos = file_len;
 
                                 if let Ok(content) = String::from_utf8(buf) {
@@ -52,7 +58,10 @@ pub fn start_watching(file_path: PathBuf, msg_tx: mpsc::UnboundedSender<AgentMes
                                         }
                                         let entry = parse_log_line(line);
                                         eprintln!("[LogWatcher] -> [{}] {}", entry.log_level, entry.message.chars().take(80).collect::<String>());
-                                        let _ = msg_tx.send(AgentMessage::Log { data: entry });
+                                        if msg_tx.send(AgentMessage::Log { data: entry }).is_err() {
+                                                            tracing::error!("日志行发送失败（通道已关闭）");
+                                                            return;
+                                                        }
                                     }
                                 }
                             }

@@ -35,7 +35,7 @@ export default function LoginPage({ onLogin }: Props) {
       } else {
         setError(data.error || '登录失败');
       }
-    } catch {
+    } catch(e) { console.error('Login error:', e);
       setError('网络错误，请检查后端服务');
     }
     setLoading(false);

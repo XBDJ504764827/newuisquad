@@ -45,10 +45,17 @@ async fn main() -> anyhow::Result<()> {
     // 启动广播处理服务
     services::broadcast_handler::start_broadcast_handler(pool, log_rx2);
 
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+    let cors = if config.allowed_origin == "*" {
+        CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods(Any)
+            .allow_headers(Any)
+    } else {
+        CorsLayer::new()
+            .allow_origin(tower_http::cors::AllowOrigin::list(config.allowed_origin.split(',').map(|s| s.trim().parse().unwrap())))
+            .allow_methods(Any)
+            .allow_headers(Any)
+    };
 
     let router = api::build_router(state).layer(cors);
 

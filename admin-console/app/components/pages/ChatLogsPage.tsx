@@ -1,11 +1,12 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-
+import { useServers } from '../../lib/useServers';
 import { api } from '../../lib/api';
+import Pagination from '../Pagination';
 
 export default function ChatLogsPage() {
-  const [servers, setServers] = useState<{ id: number; name: string }[]>([]);
+  const { servers, loading: serversLoading } = useServers();
   const [serverId, setServerId] = useState<number | null>(null);
   const [messages, setMessages] = useState<any[]>([]);
   const [page, setPage] = useState(1);
@@ -13,10 +14,8 @@ export default function ChatLogsPage() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    api(`/servers`).then(r => r.json())
-      .then(d => { setServers(d.data || []); if (d.data?.length > 0) setServerId(d.data[0].id); })
-      .catch(() => {});
-  }, []);
+    if (servers.length > 0 && !serverId) setServerId(servers[0].id);
+  }, [servers, serverId]);
 
   useEffect(() => {
     if (!serverId) return; setLoading(true);
@@ -46,7 +45,7 @@ export default function ChatLogsPage() {
               <th style={{ padding: '10px 14px', color: 'var(--text3)', fontWeight: 500 }}>内容</th>
             </tr></thead>
             <tbody>{messages.map((m, i) => (
-              <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
+              <tr key={(m as any).id ?? i} style={{ borderBottom: '1px solid var(--border)' }}>
                 <td style={{ padding: '6px 14px', whiteSpace: 'nowrap', fontSize: 12 }}>{new Date(m.logged_at).toLocaleString()}</td>
                 <td style={{ padding: '6px 14px', fontWeight: 500 }}>{m.player_name || '-'}</td>
                 <td style={{ padding: '6px 14px' }}>
@@ -56,13 +55,7 @@ export default function ChatLogsPage() {
               </tr>
             ))}</tbody>
           </table>}
-          {total > 100 && (
-            <div style={{ display: 'flex', justifyContent: 'center', gap: 8, padding: 16 }}>
-              <button className="rcon-btn" style={{ width: 'auto', padding: '6px 14px', fontSize: 12 }} disabled={page <= 1} onClick={() => setPage(p => p - 1)}>上一页</button>
-              <span style={{ fontSize: 12, color: 'var(--text2)', alignSelf: 'center' }}>第 {page} / {Math.ceil(total / 100)} 页</span>
-              <button className="rcon-btn" style={{ width: 'auto', padding: '6px 14px', fontSize: 12 }} disabled={page >= Math.ceil(total / 100)} onClick={() => setPage(p => p + 1)}>下一页</button>
-            </div>
-          )}
+          <Pagination page={page} total={total} perPage={100} onPageChange={setPage} />
         </div>
       </div>
     </div>

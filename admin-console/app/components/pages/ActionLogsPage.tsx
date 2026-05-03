@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 
 import { api } from '../../lib/api';
+import Pagination from '../Pagination';
 
 const LOG_TYPE_TABS = [
   { id: '', label: '全部' },
@@ -68,7 +69,7 @@ export default function ActionLogsPage() {
               <th style={{ padding: '10px 14px', color: 'var(--text3)', fontWeight: 500 }}>消息</th>
             </tr></thead>
             <tbody>{logs.map((l: any, i: number) => (
-              <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
+              <tr key={(l as any).id ?? i} style={{ borderBottom: '1px solid var(--border)' }}>
                 <td style={{ padding: '6px 14px', whiteSpace: 'nowrap', fontSize: 12 }}>
                   {new Date(l.logged_at).toLocaleString()}
                 </td>
@@ -88,13 +89,7 @@ export default function ActionLogsPage() {
               </tr>
             ))}</tbody>
           </table>}
-          {total > 50 && (
-            <div style={{ display: 'flex', justifyContent: 'center', gap: 8, padding: 16 }}>
-              <button className="rcon-btn" style={{ width: 'auto', padding: '6px 14px', fontSize: 12 }} disabled={page <= 1} onClick={() => setPage(p => p - 1)}>上一页</button>
-              <span style={{ fontSize: 12, color: 'var(--text2)', alignSelf: 'center' }}>第 {page} / {Math.ceil(total / 50)} 页</span>
-              <button className="rcon-btn" style={{ width: 'auto', padding: '6px 14px', fontSize: 12 }} disabled={page >= Math.ceil(total / 50)} onClick={() => setPage(p => p + 1)}>下一页</button>
-            </div>
-          )}
+          <Pagination page={page} total={total} perPage={50} onPageChange={setPage} />
         </div>
       </div>
     </div>

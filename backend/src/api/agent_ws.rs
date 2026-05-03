@@ -218,7 +218,13 @@ async fn handle_socket(
 
     let mut send_task = tokio::spawn(async move {
         while let Some(cmd) = cmd_rx.recv().await {
-            let json = serde_json::to_string(&cmd).unwrap();
+            let json = match serde_json::to_string(&cmd) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!("Agent 消息序列化失败: {}", e);
+                    continue;
+                }
+            };
             if ws_sender
                 .send(Message::Text(json.into()))
                 .await

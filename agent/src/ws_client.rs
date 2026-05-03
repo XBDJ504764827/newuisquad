@@ -30,7 +30,10 @@ pub async fn run(
                     while let Some(Ok(msg)) = read.next().await {
                         if let Ok(text) = msg.to_text() {
                             if let Ok(cmd) = serde_json::from_str::<AgentMessage>(text) {
-                                let _ = send_tx.send(cmd);
+                                if send_tx.send(cmd).is_err() {
+                                    tracing::error!("命令转发失败（通道已关闭）");
+                                    break;
+                                }
                             }
                         }
                     }
@@ -42,7 +45,13 @@ pub async fn run(
                         msg = locked_rx.recv() => {
                             match msg {
                                 Some(msg) => {
-                                    let json = serde_json::to_string(&msg).unwrap();
+                                    let json = match serde_json::to_string(&msg) {
+                                        Ok(s) => s,
+                                        Err(e) => {
+                                            tracing::error!("消息序列化失败: {}", e);
+                                            continue;
+                                        }
+                                    };
                                     if write.send(tokio_tungstenite::tungstenite::Message::Text(json.into())).await.is_err() {
                                         break;
                                     }

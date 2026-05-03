@@ -24,16 +24,38 @@ impl SquadRcon {
         let cmd_packet = build_packet(2, command);
         self.stream.write_all(&cmd_packet).await.map_err(|e| format!("发送命令失败: {}", e))?;
 
-        let mut buf = vec![0u8; 4096];
-        let n = tokio::time::timeout(
+        // 读取响应：先读取 12 字节头部（size + id + type），再根据 size 读取剩余 body
+        let mut header = [0u8; 12];
+        tokio::time::timeout(
             std::time::Duration::from_secs(5),
-            self.stream.read(&mut buf)
+            self.stream.read_exact(&mut header)
         )
         .await
         .map_err(|_| "RCON 读取超时".to_string())?
-        .map_err(|e| format!("读取响应失败: {}", e))?;
+        .map_err(|e| format!("读取响应头失败: {}", e))?;
 
-        String::from_utf8(buf[..n].to_vec())
+        let size = i32::from_le_bytes([header[0], header[1], header[2], header[3]]) as usize;
+        if size < 10 {
+            return Err("无效的 RCON 响应".to_string());
+        }
+
+        // body = size - 8 (id + type already read) = size - 8 bytes remaining
+        let body_len = size.saturating_sub(8);
+        let mut body_buf = vec![0u8; body_len];
+
+        if body_len > 0 {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                self.stream.read_exact(&mut body_buf)
+            )
+            .await
+            .map_err(|_| "RCON 读取 body 超时".to_string())?
+            .map_err(|e| format!("读取响应 body 失败: {}", e))?;
+        }
+
+        // 去除尾部 null 字节
+        let body_end = body_buf.iter().rposition(|&b| b != 0).map_or(0, |i| i + 1);
+        String::from_utf8(body_buf[..body_end].to_vec())
             .map_err(|e| format!("解析响应失败: {}", e))
     }
 }
