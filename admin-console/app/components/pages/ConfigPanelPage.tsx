@@ -95,6 +95,11 @@ export default function ConfigPanelPage() {
   }[]>([]);
   const [abDamageLogsLoading, setAbDamageLogsLoading] = useState(false);
   const [abDamageLogsQuery, setAbDamageLogsQuery] = useState('');
+  // Team switch settings state
+  const [tsLoading, setTsLoading] = useState(false);
+  const [tsSaving, setTsSaving] = useState(false);
+  const [tsEnabled, setTsEnabled] = useState(false);
+
   const [successMsg, setSuccessMsg] = useState('');
 
   const showSuccess = (msg: string) => { setSuccessMsg(msg); setTimeout(() => setSuccessMsg(''), 3000); };
@@ -160,6 +165,11 @@ export default function ConfigPanelPage() {
       .catch(() => {});
     // 加载异常伤害日志
     fetchAbDamageLogs();
+    // 加载代码跳边设置
+    setTsLoading(true);
+    api(`/servers/${selectedServerId}/team-switch-config`).then(r => r.json())
+      .then(d => { setTsEnabled(d.enabled); setTsLoading(false); })
+      .catch(() => setTsLoading(false));
   }, [selectedServerId]);
 
   const saveTkSettings = useCallback(async () => {
@@ -217,6 +227,13 @@ export default function ConfigPanelPage() {
     const data = await res.json(); setAbDamageSaving(false);
     if (data.error) setAbDamageError(data.error); else showSuccess('异常伤害设置已保存');
   }, [selectedServerId, abDamageEnabled]);
+
+  const saveTsConfig = useCallback(async () => {
+    if (!selectedServerId) return; setTsSaving(true);
+    const res = await api(`/servers/${selectedServerId}/team-switch-config`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: tsEnabled }) });
+    const data = await res.json(); setTsSaving(false);
+    if (data.error) showSuccess('代码跳边设置保存失败'); else showSuccess('代码跳边设置已保存');
+  }, [selectedServerId, tsEnabled]);
 
   const addAbDamageRule = useCallback(async () => {
     if (!selectedServerId || !newAbDamage) return;
@@ -399,7 +416,34 @@ export default function ConfigPanelPage() {
             )}
           </div>
         )}
-        {activeTab === 'tab-4' && <div className="tab-content" style={{ display: 'block' }}><h4>代码跳边设置</h4><p style={{ color: 'var(--text3)', fontSize: 12, marginTop: 8 }}>玩家在公屏发送"tb"或"跳边"触发代码跳边流程，管理员批准后自动执行跳边。</p></div>}
+        {activeTab === 'tab-4' && (
+          <div className="tab-content" style={{ display: 'block' }}>
+            <h4 style={{ marginBottom: 20 }}>代码跳边设置</h4>
+            {!selectedServerId ? (
+              <p style={{ color: 'var(--text3)', fontSize: 12 }}>请先添加游戏服务器。</p>
+            ) : tsLoading ? (
+              <p style={{ color: 'var(--text3)', fontSize: 12 }}>加载中...</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 24, maxWidth: 500 }}>
+                <label style={{ display: 'flex', alignItems: 'flex-start', gap: 12, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={tsEnabled} onChange={e => setTsEnabled(e.target.checked)} style={{ marginTop: 2 }} />
+                  <div>
+                    <div style={{ fontWeight: 500 }}>开启代码跳边</div>
+                    <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4, lineHeight: 1.6 }}>
+                      开启后，玩家可在公屏发送 <code>tb&lt;tag&gt;</code> 或 <code>跳边&lt;tag&gt;</code> 发起跳边请求。<br />
+                      对方队伍玩家可发送 <code>rl&lt;tag&gt;</code> 或 <code>认领&lt;tag&gt;</code> 认领该玩家。<br />
+                      管理员发送 <code>ty&lt;tag&gt;</code> 或 <code>同意&lt;tag&gt;</code> 批准后自动执行跳边。<br />
+                      每个阶段有效期为 60 秒，超时自动失效。
+                    </div>
+                  </div>
+                </label>
+                <button className="rcon-btn" style={{ width: 'auto', padding: '10px 24px' }} onClick={saveTsConfig} disabled={tsSaving}>
+                  {tsSaving ? '保存中...' : '保存设置'}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
         {activeTab === 'tab-5' && (
           <div className="tab-content" style={{ display: 'block' }}>
             <h4 style={{ marginBottom: 20 }}>广播设置</h4>

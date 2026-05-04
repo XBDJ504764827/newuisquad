@@ -237,27 +237,40 @@ async fn handle_socket(
                             if let Some(category) = &data.category {
                                 let is_public_chat = category == "Chat-All" || category == "Chat" || category == "ChatTeam" || category == "ChatSquad";
                                 if is_public_chat {
-                                    let parsed = data.message.split_once(": ");
-                                    if let Some((chat_player, chat_msg)) = parsed {
-                                        let cache = server_states.read().ok();
-                                        let state = cache.as_ref().and_then(|c| c.get(&sid.to_string()));
-                                        tracing::debug!(server_id = %sid, player = %chat_player, msg = %chat_msg, has_state = state.is_some(), "代码跳边: 处理聊天");
-                                        let commands = ts_manager.process_chat(
-                                            &sid.to_string(),
-                                            chat_player,
-                                            chat_msg,
-                                            state,
-                                        );
-                                        drop(cache);
-                                        if commands.is_empty() {
-                                            tracing::warn!(server_id = %sid, player = %chat_player, "代码跳边: 未生成任何命令");
+                                    // 检查功能开关
+                                    let ts_enabled = sqlx::query_scalar::<_, bool>(
+                                        "SELECT enabled FROM team_switch_config WHERE server_id = $1"
+                                    )
+                                    .bind(sid)
+                                    .fetch_optional(&pool)
+                                    .await
+                                    .ok()
+                                    .flatten()
+                                    .unwrap_or(false);
+
+                                    if ts_enabled {
+                                        let parsed = data.message.split_once(": ");
+                                        if let Some((chat_player, chat_msg)) = parsed {
+                                            let cache = server_states.read().ok();
+                                            let state = cache.as_ref().and_then(|c| c.get(&sid.to_string()));
+                                            tracing::info!(server_id = %sid, player = %chat_player, msg = %chat_msg, has_state = state.is_some(), raw_msg = %data.message, "代码跳边: 解析聊天");
+                                            let commands = ts_manager.process_chat(
+                                                &sid.to_string(),
+                                                chat_player,
+                                                chat_msg,
+                                                state,
+                                            );
+                                            drop(cache);
+                                            if commands.is_empty() {
+                                                tracing::warn!(server_id = %sid, player = %chat_player, "代码跳边: 未生成任何命令");
+                                            }
+                                            for cmd in commands {
+                                                tracing::info!(server_id = %sid, player = %chat_player, "代码跳边: {}", cmd);
+                                                let _ = rcon_cmd_tx.send(AgentMessage::SendRcon { command: cmd });
+                                            }
+                                        } else {
+                                            tracing::debug!(server_id = %sid, category = ?data.category, msg = %data.message, "聊天消息格式无法解析");
                                         }
-                                        for cmd in commands {
-                                            tracing::info!(server_id = %sid, player = %chat_player, "代码跳边: {}", cmd);
-                                            let _ = rcon_cmd_tx.send(AgentMessage::SendRcon { command: cmd });
-                                        }
-                                    } else {
-                                        tracing::debug!(server_id = %sid, category = ?data.category, msg = %data.message, "聊天消息格式无法解析");
                                     }
                                 }
                             }
@@ -300,7 +313,7 @@ async fn handle_socket(
                                     "name": p.name, "steam_id": p.steam_id, "team_id": p.team_id,
                                     "squad_id": p.squad_id, "role": p.role, "kills": p.kills,
                                     "deaths": p.deaths, "score": p.score, "ping": p.ping, "is_admin": p.is_admin,
-                                    "is_leader": p.is_leader,
+                                    "is_leader": p.is_leader, "player_id": p.player_id,
                                 })).collect::<Vec<_>>(),
                                 "admin_steam_ids": admin_steam_ids,
                                 "squads": squads.iter().map(|s| {

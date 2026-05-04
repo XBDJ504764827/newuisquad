@@ -180,6 +180,7 @@ pub fn start_rcon_listener(
 
                             // ===== 聊天 =====
                             if let Some(ev) = chat_event(&body) {
+                                eprintln!("[RCON] 聊天解析: player={:?} msg={:?} raw={:?}", ev.player, ev.msg, &body[..body.len().min(200)]);
                                 let _ = msg_tx.send(AgentMessage::Log { data: LogEntry {
                                     log_level: "INFO".into(), category: Some(format!("Chat-{}", ev.channel)),
                                     message: format!("{}: {}", ev.player, ev.msg),
@@ -229,7 +230,8 @@ pub fn start_rcon_listener(
 
                             // ===== 未匹配包：仅对长度为 5-200 的非系统包做诊断 =====
                             if body.len() > 5 && body.len() < 200 && !body.contains("-----") && !body.contains("Online IDs:") && !body.starts_with("{") {
-                                let preview: &str = &body[..body.len().min(150)];
+                                let end = body.floor_char_boundary(body.len().min(150));
+                                let preview: &str = &body[..end];
                                 eprintln!("[RCON] 未匹配: {:?}", preview);
                             }
                         }
@@ -391,9 +393,22 @@ fn chat_event(raw: &str) -> Option<Chat> {
         else if line.starts_with("[ChatAdmin]") { ("Admin", &line[12..]) }
         else { continue };
         let rest = rest.trim();
-        let after = if rest.starts_with("[Online IDs:") { rest.split(']').nth(1).unwrap_or(rest).trim() } else { rest };
-        if let Some(pos) = after.find(" : ") {
-            return Some(Chat { channel: ch.into(), player: after[..pos].trim().into(), msg: after[pos+3..].trim().into() });
+        // 剥离行中任意位置的 [Online IDs: ...] 块（直接移除，保留周围字符不变）
+        let cleaned = if let Some(start) = rest.find("[Online IDs:") {
+            if let Some(end) = rest[start..].find(']') {
+                let end_pos = start + end + 1;
+                let mut s = String::with_capacity(rest.len());
+                s.push_str(&rest[..start]);
+                s.push_str(&rest[end_pos..]);
+                s
+            } else {
+                rest.to_string()
+            }
+        } else {
+            rest.to_string()
+        };
+        if let Some(pos) = cleaned.find(" : ") {
+            return Some(Chat { channel: ch.into(), player: cleaned[..pos].trim().into(), msg: cleaned[pos+3..].trim().into() });
         }
     }
     None
@@ -408,9 +423,10 @@ fn parse_players(raw: &str) -> Vec<PlayerInfo> {
         if line.is_empty() || line.starts_with("-----") { continue; }
         let mut name=String::new(); let mut steam=String::new(); let mut tid=0i32; let mut sq=None; let mut role=String::new();
         let mut k=0i32; let mut d=0i32; let mut sc=0i32; let mut ping=0i32; let mut admin=false; let mut leader=false;
+        let mut player_id=0i32;
         for part in line.split('|') {
             let v = part.trim();
-            if let Some(x)=v.strip_prefix("Name: ") { name=x.to_string(); }
+            if let Some(x)=v.strip_prefix("Name: ") { name=x.trim().to_string(); }
             else if let Some(x)=v.strip_prefix("Online IDs: ") {
                 // "Online IDs: EOS: xxx steam: 7656xxx" → 提取 steam ID
                 // 兼容 steam:/Steam: 大小写
@@ -426,6 +442,7 @@ fn parse_players(raw: &str) -> Vec<PlayerInfo> {
                 // 只记 EOS ID 作为备用，但优先用 SteamID
                 if steam.is_empty() { steam=x.to_string(); }
             }
+            else if let Some(x)=v.strip_prefix("ID: ") { player_id=x.parse().unwrap_or(0); }
             else if let Some(x)=v.strip_prefix("Team ID: ") { tid=x.parse().unwrap_or(0); }
             else if let Some(x)=v.strip_prefix("Squad ID: ") { let x=x.trim(); if x!="N/A"&&!x.is_empty() { sq=Some(x.to_string()); } }
             else if let Some(x)=v.strip_prefix("Role: ") { role=x.to_string(); }
@@ -448,7 +465,7 @@ fn parse_players(raw: &str) -> Vec<PlayerInfo> {
                 eprintln!("[RCON] ⚠ SteamID 解析失败，玩家行示例(前200字符): {:?}", &line[..line.len().min(200)]);
                 debug_printed = true;
             }
-            out.push(PlayerInfo{name,steam_id:steam,team_id:tid,squad_id:sq,role,kills:k,deaths:d,score:sc,ping,is_admin:admin,is_leader:leader});
+            out.push(PlayerInfo{name,steam_id:steam,team_id:tid,squad_id:sq,role,kills:k,deaths:d,score:sc,ping,is_admin:admin,is_leader:leader,player_id});
         }
     }
     out

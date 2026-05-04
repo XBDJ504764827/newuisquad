@@ -136,7 +136,7 @@ pub async fn get_server_state(
                     "name": p.name, "steam_id": p.steam_id, "team_id": p.team_id,
                     "squad_id": p.squad_id, "role": p.role,
                     "kills": p.kills, "deaths": p.deaths, "score": p.score, "ping": p.ping,
-                    "is_admin": p.is_admin,
+                    "is_admin": p.is_admin, "player_id": p.player_id,
                 })).collect::<Vec<_>>(),
                 "squads": s.squads.iter().map(|s| serde_json::json!({
                     "name": s.name, "creator": s.creator, "team_id": s.team_id,

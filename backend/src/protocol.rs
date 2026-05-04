@@ -71,6 +71,8 @@ pub struct PlayerState {
     pub is_admin: bool,
     #[serde(default)]
     pub is_leader: bool,
+    #[serde(default)]
+    pub player_id: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

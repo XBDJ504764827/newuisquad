@@ -11,6 +11,7 @@ pub struct PlayerInfo {
     pub score: i32,
     pub ping: i32,
     pub is_admin: bool,
+    pub player_id: i32,
 }
 
 pub struct SquadInfo {
@@ -176,10 +177,12 @@ fn parse_list_players(raw: &str) -> Vec<PlayerInfo> {
         let mut score = 0i32;
         let mut ping = 0i32;
         let mut is_admin = false;
+        let mut player_id = 0i32;
 
         for part in line.split('|') {
             let part = part.trim();
             if let Some(v) = part.strip_prefix("Name: ") { name = v.trim().to_string(); }
+            else if let Some(v) = part.strip_prefix("ID: ") { player_id = v.trim().parse().unwrap_or(0); }
             else if let Some(v) = part.strip_prefix("SteamID: ") { steam_id = v.trim().to_string(); }
             else if let Some(v) = part.strip_prefix("Team ID: ") { team_id = v.trim().parse().unwrap_or(0); }
             else if let Some(v) = part.strip_prefix("Squad ID: ") { let s = v.trim(); if s != "N/A" && !s.is_empty() { squad_id = Some(s.to_string()); } }
@@ -192,7 +195,7 @@ fn parse_list_players(raw: &str) -> Vec<PlayerInfo> {
         }
 
         if !name.is_empty() {
-            players.push(PlayerInfo { name, steam_id, team_id, squad_id, role, kills, deaths, score, ping, is_admin });
+            players.push(PlayerInfo { name, steam_id, team_id, squad_id, role, kills, deaths, score, ping, is_admin, player_id });
         }
     }
     players

@@ -11,3 +11,4 @@ pub mod team_settings;
 pub mod seed_settings;
 pub mod damage_notify_settings;
 pub mod abnormal_damage;
+pub mod team_switch;

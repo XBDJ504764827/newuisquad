@@ -14,3 +14,4 @@ pub mod steam_service;
 pub mod rcon_server_info;
 pub mod system_log;
 pub mod team_switch;
+pub mod team_switch_service;

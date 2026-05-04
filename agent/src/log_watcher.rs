@@ -97,11 +97,50 @@ fn parse_log_line(line: &str) -> LogEntry {
         "General"
     };
 
+    // 对于聊天行，清理格式以便后端正确解析玩家名和消息
+    let message = if category == "Chat" {
+        parse_chat_message(line)
+    } else {
+        line.to_string()
+    };
+
     LogEntry {
         log_level: log_level.to_string(),
         category: Some(category.to_string()),
-        message: line.to_string(),
+        message,
         raw_line: Some(line.to_string()),
         logged_at: chrono::Utc::now(),
     }
+}
+
+/// 解析聊天日志行，输出 "PlayerName: Message" 格式（去除 [Online IDs:] 等干扰）
+fn parse_chat_message(line: &str) -> String {
+    let chat_prefixes = ["[ChatAll]", "[ChatTeam]", "[ChatSquad]", "[ChatAdmin]"];
+    for prefix in &chat_prefixes {
+        if let Some(rest) = line.strip_prefix(prefix) {
+            let rest = rest.trim();
+            // 剥离 [Online IDs: ...] 块
+            let cleaned = if let Some(start) = rest.find("[Online IDs:") {
+                if let Some(end) = rest[start..].find(']') {
+                    let end_pos = start + end + 1;
+                    format!("{}{}", &rest[..start], &rest[end_pos..])
+                } else {
+                    rest.to_string()
+                }
+            } else {
+                rest.to_string()
+            };
+            // 查找 " : " 分隔符提取玩家名和消息
+            if let Some(pos) = cleaned.find(" : ") {
+                let player = cleaned[..pos].trim();
+                let msg = cleaned[pos + 3..].trim();
+                if !player.is_empty() {
+                    return format!("{}: {}", player, msg);
+                }
+            }
+            break;
+        }
+    }
+    // 无法解析时回退到原始行
+    line.to_string()
 }

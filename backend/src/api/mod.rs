@@ -21,6 +21,7 @@ pub mod auth;
 pub mod auth_middleware;
 pub mod chat;
 pub mod squadjs_report;
+pub mod team_switch;
 
 use axum::{Router, routing::{get, post, put}};
 use axum::middleware::from_fn;
@@ -73,6 +74,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v1/servers/{id}/abnormal-damage-rules", get(abnormal_damage::list_rules).post(abnormal_damage::create_rule))
         .route("/api/v1/servers/{id}/abnormal-damage-rules/{rid}", axum::routing::delete(abnormal_damage::delete_rule))
         .route("/api/v1/servers/{id}/abnormal-damage-logs", get(abnormal_damage::list_logs))
+        .route("/api/v1/servers/{id}/team-switch-config", get(team_switch::get_config).put(team_switch::update_config))
         .route("/api/v1/servers/{id}/fly-events", get(squad_events::fly_events))
         .route("/api/v1/servers/{id}/kill-events", get(squad_events::kill_events))
         .route("/api/v1/servers/{id}/match-events", get(squad_events::match_events))

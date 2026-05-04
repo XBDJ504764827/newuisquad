@@ -9,3 +9,4 @@ pub mod team_settings_repo;
 pub mod seed_settings_repo;
 pub mod damage_notify_repo;
 pub mod abnormal_damage_repo;
+pub mod team_switch_repo;

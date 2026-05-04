@@ -62,6 +62,8 @@ pub struct PlayerInfo {
     pub kills: i32, pub deaths: i32, pub score: i32, pub ping: i32, pub is_admin: bool,
     #[serde(default)]
     pub is_leader: bool,
+    #[serde(default)]
+    pub player_id: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
