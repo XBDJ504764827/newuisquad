@@ -41,6 +41,8 @@ pub enum AgentMessage {
         player_count: i32,
         max_players: i32,
         next_map: String,
+        #[serde(default)]
+        admin_steam_ids: Vec<String>,
     },
 
     #[serde(rename = "read_file")]

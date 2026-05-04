@@ -569,6 +569,7 @@ export default function ControlPanelPage() {
                                                                     members={members}
                                                                     onAction={execPlayerAction}
                                                                     onDisband={() => { if (confirm(`解散 ${sq.name}?`)) execDisbandSquad(teamId, sq.squad_id); }}
+                                                                    adminSteamIds={serverState.admin_steam_ids}
                                                                 />
                                                             );
                                                         })}
@@ -579,6 +580,7 @@ export default function ControlPanelPage() {
                                                                 members={sp(sid)}
                                                                 onAction={execPlayerAction}
                                                                 onDisband={() => { if (confirm(`解散 小队 ${sid}?`)) execDisbandSquad(teamId, sid); }}
+                                                                adminSteamIds={serverState.admin_steam_ids}
                                                             />
                                                         ))}
                                                         {us.length > 0 && (
@@ -587,6 +589,7 @@ export default function ControlPanelPage() {
                                                                 members={us}
                                                                 onAction={execPlayerAction}
                                                                 onDisband={null}
+                                                                adminSteamIds={serverState.admin_steam_ids}
                                                                 collapsed={false}
                                                             />
                                                         )}
@@ -768,9 +771,9 @@ function InfoRow({ label, value }: { label: string; value: string }) {
     );
 }
 
-function SquadBlock({ squad, members, onAction, onDisband, collapsed: forceCollapsed }: {
+function SquadBlock({ squad, members, onAction, onDisband, adminSteamIds, collapsed: forceCollapsed }: {
     squad: any; members: any[]; onAction: (name: string, action: string, msg?: string) => void;
-    onDisband: (() => void) | null; collapsed?: boolean;
+    onDisband: (() => void) | null; adminSteamIds?: string[]; collapsed?: boolean;
 }) {
     const [collapsed, setCollapsed] = useState(forceCollapsed ?? (members.length > 8));
     const leader = members.find((m: any) => m.is_leader);
@@ -811,8 +814,6 @@ function SquadBlock({ squad, members, onAction, onDisband, collapsed: forceColla
                         <tr style={{ background: 'var(--bg2)' }}>
                             <th style={{ padding: '5px 14px', color: 'var(--text3)', fontWeight: 500, textAlign: 'left', fontSize: 10 }}>玩家</th>
                             <th style={{ padding: '5px 6px', color: 'var(--text3)', fontWeight: 500, textAlign: 'left', fontSize: 10 }}>职业</th>
-                            <th style={{ padding: '5px 6px', color: 'var(--text3)', fontWeight: 500, textAlign: 'center', fontSize: 10 }}>K</th>
-                            <th style={{ padding: '5px 6px', color: 'var(--text3)', fontWeight: 500, textAlign: 'center', fontSize: 10 }}>D</th>
                             <th style={{ padding: '5px 14px', color: 'var(--text3)', fontWeight: 500, textAlign: 'right', fontSize: 10 }}>操作</th>
                         </tr>
                     </thead>
@@ -825,13 +826,11 @@ function SquadBlock({ squad, members, onAction, onDisband, collapsed: forceColla
                                 <td style={{ padding: '5px 14px' }}>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                                         <span style={{ fontWeight: 600, fontSize: 12 }}>{p.name}</span>
-                                        {p.is_admin && <span style={{ color: '#f59e0b', fontSize: 9 }}>⭐</span>}
+                                        {(p.is_admin || (adminSteamIds && p.steam_id && adminSteamIds.includes(p.steam_id))) && <span style={{ color: '#f59e0b', fontSize: 9, background: 'rgba(245,158,11,0.15)', padding: '1px 5px', borderRadius: 3, fontWeight: 700, letterSpacing: '0.02em' }}>OP</span>}
                                         {p.is_leader && <span style={{ color: '#f59e0b', fontSize: 9 }}>👑</span>}
                                     </div>
                                 </td>
                                 <td style={{ padding: '5px 6px', color: 'var(--text2)', fontSize: 10 }}>{p.role}</td>
-                                <td style={{ padding: '5px 6px', textAlign: 'center', color: '#22c55e', fontWeight: 500 }}>{p.kills}</td>
-                                <td style={{ padding: '5px 6px', textAlign: 'center', color: 'var(--red)', fontWeight: 500 }}>{p.deaths}</td>
                                 <td style={{ padding: '5px 14px', textAlign: 'right' }}>
                                     <div style={{ display: 'flex', gap: 3, justifyContent: 'flex-end' }}>
                                         <ActionBtn color="var(--text2)" bg="var(--bg4)" onClick={() => onAction(p.name, 'warn')}>警告</ActionBtn>

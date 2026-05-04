@@ -8,7 +8,7 @@ const configTabs = [
   { id: 'tab-1', label: '快捷设置' },
   { id: 'tab-2', label: '误杀设置' },
   { id: 'tab-3', label: '挂机设置' },
-  { id: 'tab-4', label: '跳边设置' },
+  { id: 'tab-4', label: '代码跳边设置' },
   { id: 'tab-5', label: '广播设置' },
   { id: 'tab-6', label: '队伍设置' },
   { id: 'tab-7', label: '悬赏设置' },
@@ -399,7 +399,7 @@ export default function ConfigPanelPage() {
             )}
           </div>
         )}
-        {activeTab === 'tab-4' && <div className="tab-content" style={{ display: 'block' }}><h4>跳边设置</h4><p style={{ color: 'var(--text3)', fontSize: 12, marginTop: 8 }}>限制玩家频繁更换阵营。（功能UI待实现）</p></div>}
+        {activeTab === 'tab-4' && <div className="tab-content" style={{ display: 'block' }}><h4>代码跳边设置</h4><p style={{ color: 'var(--text3)', fontSize: 12, marginTop: 8 }}>玩家在公屏发送"tb"或"跳边"触发代码跳边流程，管理员批准后自动执行跳边。</p></div>}
         {activeTab === 'tab-5' && (
           <div className="tab-content" style={{ display: 'block' }}>
             <h4 style={{ marginBottom: 20 }}>广播设置</h4>

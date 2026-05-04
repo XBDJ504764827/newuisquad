@@ -10,6 +10,7 @@ pub fn start_rcon_listener(
     msg_tx: mpsc::UnboundedSender<AgentMessage>,
     mut rcon_cmd_rx: mpsc::UnboundedReceiver<String>,
     auto_broadcast_secs: u64, auto_broadcast_msg: String, welcome_msg: String,
+    admins_cfg_path: String,
 ) {
     std::thread::spawn(move || {
         let addr = format!("{}:{}", host, port);
@@ -32,6 +33,8 @@ pub fn start_rcon_listener(
 
             backoff = 1;
             eprintln!("[RCON] 已连接");
+            // 读取 Admins.cfg 获取管理员 SteamID 列表
+            let admin_steam_ids = parse_admins_cfg(&admins_cfg_path);
             let mut buf = [0u8; 65536];
             let mut partial: Vec<u8> = Vec::new();
             // 设为 3 秒前，让首次状态查询立即执行
@@ -101,6 +104,7 @@ pub fn start_rcon_listener(
                                 map_name, game_mode,
                                 server_name, player_count: actual_player_count, max_players,
                                 next_map: next_map_name,
+                                admin_steam_ids: admin_steam_ids.clone(),
                             });
                         }
                     }
@@ -509,6 +513,38 @@ fn parse_squads(raw: &str) -> Vec<SquadInfo> {
     }
     out
 }
+/// 从 Admins.cfg 文件中解析管理员 SteamID 列表
+fn parse_admins_cfg(path: &str) -> Vec<String> {
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("[RCON] 无法读取 Admins.cfg ({}): {}", path, e);
+            return vec![];
+        }
+    };
+    let mut ids = Vec::new();
+    for line in content.lines() {
+        // 匹配格式: Admins=(Group="...", SteamID=7656119xxxxxxxxxx)
+        // 提取所有 17 位 SteamID64（以 7656119 开头）
+        let mut i = 0;
+        while i < line.len() {
+            let rest = &line[i..];
+            let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+            let dlen = digits.len();
+            if dlen == 17 && digits.starts_with("7656119") {
+                let before = i == 0 || !line[..i].chars().last().map_or(false, |c| c.is_ascii_digit());
+                let after = i + 17 >= line.len() || !line[i+17..].chars().next().map_or(false, |c| c.is_ascii_digit());
+                if before && after && !ids.contains(&digits) {
+                    ids.push(digits);
+                }
+            }
+            if dlen > 0 { i += dlen; } else { i += rest.chars().next().map_or(0, |c| c.len_utf8()); }
+        }
+    }
+    eprintln!("[RCON] 从 Admins.cfg 解析到 {} 个管理员 SteamID", ids.len());
+    ids
+}
+
 fn parse_team_names(raw: &str) -> Vec<TeamName> {
     let mut out=Vec::new();
     for line in raw.lines() {

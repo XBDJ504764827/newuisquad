@@ -28,6 +28,8 @@ pub enum AgentMessage {
         map_name: String, game_mode: String,
         server_name: String, player_count: i32, max_players: i32,
         next_map: String,
+        #[serde(default)]
+        admin_steam_ids: Vec<String>,
     },
 
     // 后端 → Agent

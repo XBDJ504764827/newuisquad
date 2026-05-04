@@ -100,12 +100,19 @@ impl TeamSwitchManager {
             created_at: Instant::now(),
         });
 
-        // 查找在线管理员
+        // 查找在线管理员：优先 RCON is_admin 字段，其次 Admins.cfg SteamID 匹配
+        let admin_steam_ids: Vec<&str> = state
+            .and_then(|s| s["admin_steam_ids"].as_array())
+            .map(|ids| ids.iter().filter_map(|id| id.as_str()).collect())
+            .unwrap_or_default();
         let admin_names: Vec<&str> = state
             .and_then(|s| s["players"].as_array())
             .map(|players| {
                 players.iter()
-                    .filter(|p| p["is_admin"].as_bool().unwrap_or(false))
+                    .filter(|p| {
+                        p["is_admin"].as_bool().unwrap_or(false)
+                            || admin_steam_ids.iter().any(|id| Some(*id) == p["steam_id"].as_str())
+                    })
                     .filter_map(|p| p["name"].as_str())
                     .collect()
             })
@@ -134,13 +141,18 @@ impl TeamSwitchManager {
         admin_name: &str,
         state: Option<&serde_json::Value>,
     ) -> Vec<String> {
-        // 验证说话的人是否是管理员
+        // 验证说话的人是否是管理员：优先 RCON is_admin，其次 Admins.cfg SteamID 匹配
+        let cfg_admin_ids: Vec<&str> = state
+            .and_then(|s| s["admin_steam_ids"].as_array())
+            .map(|ids| ids.iter().filter_map(|id| id.as_str()).collect())
+            .unwrap_or_default();
         let is_admin = state
             .and_then(|s| s["players"].as_array())
             .map(|players| {
                 players.iter().any(|p| {
                     p["name"].as_str() == Some(admin_name)
-                        && p["is_admin"].as_bool().unwrap_or(false)
+                        && (p["is_admin"].as_bool().unwrap_or(false)
+                            || cfg_admin_ids.iter().any(|id| Some(*id) == p["steam_id"].as_str()))
                 })
             })
             .unwrap_or(false);
@@ -303,13 +315,19 @@ impl TeamSwitchManager {
             Some(s) => {
                 let players = s["players"].as_array();
                 let Some(players) = players else { return (String::new(), false) };
+                let admin_ids = s["admin_steam_ids"].as_array();
+
+                // 检查 steam_id 是否在 Admins.cfg 管理员列表中
+                let check_admin = |steam_id: &str, is_admin: bool| -> bool {
+                    if is_admin { return true; }
+                    admin_ids.map(|ids| ids.iter().any(|id| id.as_str() == Some(steam_id))).unwrap_or(false)
+                };
 
                 // 1. 精确匹配
                 if let Some(p) = players.iter().find(|p| p["name"].as_str() == Some(player_name)) {
-                    return (
-                        p["steam_id"].as_str().unwrap_or("").to_string(),
-                        p["is_admin"].as_bool().unwrap_or(false),
-                    );
+                    let sid = p["steam_id"].as_str().unwrap_or("").to_string();
+                    let is_admin = check_admin(&sid, p["is_admin"].as_bool().unwrap_or(false));
+                    return (sid, is_admin);
                 }
 
                 // 2. 大小写不敏感匹配
@@ -318,10 +336,9 @@ impl TeamSwitchManager {
                     p["name"].as_str().map(|n| n.to_lowercase() == lower).unwrap_or(false)
                 }) {
                     tracing::info!(original = %player_name, matched = %p["name"].as_str().unwrap_or("?"), "代码跳边: 大小写匹配");
-                    return (
-                        p["steam_id"].as_str().unwrap_or("").to_string(),
-                        p["is_admin"].as_bool().unwrap_or(false),
-                    );
+                    let sid = p["steam_id"].as_str().unwrap_or("").to_string();
+                    let is_admin = check_admin(&sid, p["is_admin"].as_bool().unwrap_or(false));
+                    return (sid, is_admin);
                 }
 
                 // 3. 模糊匹配（名字包含）
@@ -331,10 +348,9 @@ impl TeamSwitchManager {
                     }).unwrap_or(false)
                 }) {
                     tracing::info!(original = %player_name, matched = %p["name"].as_str().unwrap_or("?"), "代码跳边: 模糊匹配");
-                    return (
-                        p["steam_id"].as_str().unwrap_or("").to_string(),
-                        p["is_admin"].as_bool().unwrap_or(false),
-                    );
+                    let sid = p["steam_id"].as_str().unwrap_or("").to_string();
+                    let is_admin = check_admin(&sid, p["is_admin"].as_bool().unwrap_or(false));
+                    return (sid, is_admin);
                 }
 
                 (String::new(), false)

@@ -61,6 +61,7 @@ async fn main() -> anyhow::Result<()> {
             config.auto_broadcast_interval_secs,
             config.auto_broadcast_message.clone(),
             config.welcome_message.clone(),
+            config.admins_cfg_path.clone(),
         );
     }
 

@@ -270,7 +270,7 @@ async fn handle_socket(
                                 let _ = tx.send(agent_msg.clone());
                             }
                         }
-                        AgentMessage::ServerStateReport { players, squads, team_names, map_name, game_mode, server_name, player_count, max_players, next_map } => {
+                        AgentMessage::ServerStateReport { players, squads, team_names, map_name, game_mode, server_name, player_count, max_players, next_map, admin_steam_ids } => {
                             tracing::info!(server_id = %sid, players = players.len(), squads = squads.len(), map = %map_name, "收到服务器状态上报");
                             let teams: Vec<serde_json::Value> = team_names.iter().map(|t| serde_json::json!({
                                 "team_id": t.team_id, "faction": t.faction,
@@ -302,6 +302,7 @@ async fn handle_socket(
                                     "deaths": p.deaths, "score": p.score, "ping": p.ping, "is_admin": p.is_admin,
                                     "is_leader": p.is_leader,
                                 })).collect::<Vec<_>>(),
+                                "admin_steam_ids": admin_steam_ids,
                                 "squads": squads.iter().map(|s| {
                                     let leader_from_player = leader_map.get(&s.squad_id);
                                     let leader_name = s.leader_name.clone()
