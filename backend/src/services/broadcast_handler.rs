@@ -167,7 +167,17 @@ pub fn start_broadcast_handler(
                     }
 
                     // 2. 在线OP列表 & 自动回复
-                    if let Some((player_name, _steam_id, message)) = parse_chat(raw) {
+                    // 优先用 Agent 已解析的干净格式 (category=Chat-*, message="玩家名: 消息")
+                    let chat_info = if let Some(ref cat) = entry.category {
+                        if cat.starts_with("Chat-") {
+                            entry.message.split_once(": ").map(|(name, msg)| (name.to_string(), String::new(), msg.to_string()))
+                        } else {
+                            parse_chat(raw)
+                        }
+                    } else {
+                        parse_chat(raw)
+                    };
+                    if let Some((player_name, _steam_id, message)) = chat_info {
                         // OP 列表关键字检测
                         if op_enabled {
                             let lower = message.to_lowercase();
@@ -195,9 +205,9 @@ pub fn start_broadcast_handler(
                             let lower_msg = message.to_lowercase();
                             for (keyword, reply_message) in &replies {
                                 if lower_msg.contains(&keyword.to_lowercase()) {
-                                    let cmd = format!("AdminWarn \"{}\" \"{}\"", player_name, reply_message);
+                                    let cmd = format!("AdminBroadcast \"{}\"", reply_message);
                                     let _ = send_rcon(&ip, rcon_port as u16, &rcon_pass, &cmd).await;
-                                    tracing::info!(server_id, player = %player_name, keyword, "已自动回复");
+                                    tracing::info!(server_id, player = %player_name, keyword, "已自动回复（广播）");
                                     break;
                                 }
                             }
