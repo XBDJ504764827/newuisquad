@@ -66,7 +66,6 @@ export default function ControlPanelPage() {
     const [serverState, setServerState] = useState<any>(null);
     const [serverStateLoading, setServerStateLoading] = useState(false);
     const [actionMsg, setActionMsg] = useState('');
-    const [selectedTeam, setSelectedTeam] = useState(1);
     // 暖服作弊开关状态: null=未知, true=开启, false=关闭
     const [warmupToggles, setWarmupToggles] = useState<Record<string, boolean | null>>(() => {
         try { const v = localStorage.getItem('warmupToggles'); if (v) return JSON.parse(v); } catch {}
@@ -521,254 +520,107 @@ export default function ControlPanelPage() {
                 {/* ═══ 右侧面板 ═══ */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                     <div className="card">
-                        {/* 右侧主标签 */}
-                        <div style={{ display: 'flex', borderBottom: '1px solid var(--border)' }}>
-                            {([
-                                { k: 'control' as const, label: '👥 玩家管理', hint: serverState?.players?.length || 0 },
-                                { k: 'chat' as const, label: '💬 实时聊天', hint: chatMsgs.length },
-                                { k: 'logs' as const, label: '📋 系统日志', hint: logs.length },
-                            ]).map(t => (
-                                <button
-                                    key={t.k}
-                                    onClick={() => setRightTab(t.k)}
-                                    style={{
-                                        flex: 1, padding: '12px', fontSize: 12, border: 'none', background: 'transparent',
-                                        cursor: 'pointer', fontWeight: rightTab === t.k ? 600 : 400,
-                                        color: rightTab === t.k ? 'var(--text)' : 'var(--text3)',
-                                        borderBottom: rightTab === t.k ? '2px solid var(--text)' : '2px solid transparent',
-                                        transition: 'all .12s', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                                    }}
-                                >
-                                    {t.label}
-                                    {t.hint > 0 && (
-                                        <span style={{ fontSize: 10, background: rightTab === t.k ? 'var(--text)' : 'var(--bg3)', color: rightTab === t.k ? 'var(--bg)' : 'var(--text3)', padding: '1px 6px', borderRadius: 10, fontWeight: 600 }}>
-                                            {t.hint}
-                                        </span>
-                                    )}
-                                </button>
-                            ))}
+                        {/* 玩家管理 */}
+                        <div style={{ padding: '6px 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8, background: 'var(--bg3)' }}>
+                            <span style={{ fontSize: 13, fontWeight: 600 }}>👥 玩家管理</span>
+                            <span style={{ fontSize: 10, color: 'var(--text3)' }}>({serverState?.players?.length || 0}人在线)</span>
+                            <div style={{ flex: 1 }} />
+                            {serverStateLoading && <span style={{ fontSize: 10, color: 'var(--text3)' }}>刷新中...</span>}
                         </div>
-
-                        {/* ═══ 玩家管理 ═══ */}
-                        {rightTab === 'control' && selectedServer && (
+                        {selectedServer && (
                             <div>
-                                {/* 子标签：玩家 / 封禁 / 警告 */}
-                                <div style={{ display: 'flex', borderBottom: '1px solid var(--border)' }}>
-                                    {[
-                                        { k: 'players' as const, label: '玩家列表' },
-                                        { k: 'bans' as const, label: '封禁记录' },
-                                        { k: 'warns' as const, label: '警告记录' },
-                                    ].map(t => (
-                                        <button
-                                            key={t.k}
-                                            onClick={() => setActiveTab(t.k)}
-                                            style={{
-                                                padding: '8px 16px', fontSize: 11, border: 'none', background: 'transparent',
-                                                cursor: 'pointer', fontWeight: activeTab === t.k ? 600 : 400,
-                                                color: activeTab === t.k ? 'var(--text)' : 'var(--text3)',
-                                                borderBottom: activeTab === t.k ? '2px solid var(--text)' : '2px solid transparent',
-                                                transition: 'all .12s',
-                                            }}
-                                        >{t.label}</button>
-                                    ))}
-                                    <div style={{ flex: 1 }} />
-                                    {serverStateLoading && <span style={{ fontSize: 10, color: 'var(--text3)', alignSelf: 'center', paddingRight: 12 }}>刷新中...</span>}
-                                </div>
+                                {/* 玩家列表 — 双方阵营左右排列 */}
+                                {serverState ? (
+                                    <div style={{ display: 'flex', maxHeight: 460 }}>
+                                        {(() => {
+                                            const teams = serverState.teams?.length > 0
+                                                ? serverState.teams
+                                                : [{ team_id: 1, faction: '队伍 1' }, { team_id: 2, faction: '队伍 2' }];
+                                            // 只显示 team 1 和 2 左右排列，未部署玩家在下方
+                                            const mainTeams = teams.filter((t: any) => t.team_id === 1 || t.team_id === 2);
+                                            const unassigned = (serverState.players || []).filter((p: any) => p.team_id === 0 || p.team_id === 0);
+                                            return (
+                                                <>
+                                                    {mainTeams.map((team: any, idx: number) => {
+                                                        const teamId = team.team_id;
+                                                        const tp = (serverState.players || []).filter((p: any) => p.team_id === teamId);
+                                                        const cnt = tp.length;
+                                                        const ts = (serverState.squads || []).filter((s: any) => s.team_id === teamId);
+                                                        const sp = (sid: string | null) => tp.filter((p: any) => p.squad_id === sid);
+                                                        const us = tp.filter((p: any) => !p.squad_id);
+                                                        const orphanSquadIds = new Set<string>();
+                                                        tp.forEach((p: any) => {
+                                                            if (p.squad_id && !ts.some((s: any) => s.squad_id === p.squad_id))
+                                                                orphanSquadIds.add(p.squad_id);
+                                                        });
 
-                                {/* 玩家列表 */}
-                                {activeTab === 'players' && (serverState ? (
-                                    <div>
-                                        {/* 阵营标签 */}
-                                        <div style={{ display: 'flex', background: 'var(--bg3)' }}>
-                                            {(() => {
-                                                const teams = serverState.teams?.length > 0
-                                                    ? serverState.teams
-                                                    : [{ team_id: 1, faction: '队伍 1' }, { team_id: 2, faction: '队伍 2' }];
-                                                return [
-                                                    ...teams,
-                                                    { team_id: 0, faction: '未部署' },
-                                                ].map((t: any) => {
-                                                    const cnt = (serverState.players || []).filter((p: any) => p.team_id === t.team_id).length;
-                                                    if (t.team_id === 0 && cnt === 0) return null;
-                                                    const active = selectedTeam === t.team_id;
-                                                    return (
-                                                        <button
-                                                            key={t.team_id}
-                                                            onClick={() => setSelectedTeam(t.team_id)}
-                                                            style={{
-                                                                flex: 1, padding: '10px 12px', cursor: 'pointer', textAlign: 'center', fontSize: 12,
-                                                                border: 'none', background: active ? 'var(--bg2)' : 'transparent',
-                                                                color: active ? 'var(--text)' : 'var(--text3)',
-                                                                borderBottom: active ? '2px solid var(--text)' : '2px solid transparent',
-                                                                transition: 'all .12s', fontWeight: active ? 600 : 400,
-                                                            }}
-                                                        >
-                                                            <span style={{ fontSize: 16, marginRight: 4 }}>{factionFlag(t.faction)}</span>
-                                                            {t.faction} <span style={{ opacity: 0.5 }}>({cnt})</span>
-                                                        </button>
-                                                    );
-                                                });
-                                            })()}
-                                        </div>
-
-                                        {/* 小队列表 */}
-                                        <div style={{ maxHeight: 420, overflowY: 'auto' }}>
-                                            {[selectedTeam].map(teamId => {
-                                                const tp = (serverState.players || []).filter((p: any) => p.team_id === teamId);
-                                                const ts = (serverState.squads || []).filter((s: any) => s.team_id === teamId);
-                                                const sp = (sid: string | null) => tp.filter((p: any) => p.squad_id === sid);
-                                                const us = tp.filter((p: any) => !p.squad_id);
-                                                const orphanSquadIds = new Set<string>();
-                                                tp.forEach((p: any) => {
-                                                    if (p.squad_id && !ts.some((s: any) => s.squad_id === p.squad_id))
-                                                        orphanSquadIds.add(p.squad_id);
-                                                });
-
-                                                if (tp.length === 0) return <div key={teamId} style={{ padding: 40, textAlign: 'center', color: 'var(--text3)' }}>无玩家</div>;
-
-                                                return (
-                                                    <div key={teamId}>
-                                                        {ts.map((sq: any) => {
-                                                            const members = sp(sq.squad_id);
-                                                            return (
-                                                                <SquadBlock
-                                                                    key={sq.name}
-                                                                    squad={sq}
-                                                                    members={members}
-                                                                    onAction={execPlayerAction}
-                                                                    onDisband={() => { if (confirm(`解散 ${sq.name}?`)) execDisbandSquad(teamId, sq.squad_id); }}
-                                                                    adminSteamIds={serverState.admin_steam_ids}
-                                                                />
-                                                            );
-                                                        })}
-                                                        {Array.from(orphanSquadIds).map(sid => (
-                                                            <SquadBlock
-                                                                key={`orphan-${sid}`}
-                                                                squad={{ name: `小队 ${sid}`, creator: '—', squad_id: sid }}
-                                                                members={sp(sid)}
-                                                                onAction={execPlayerAction}
-                                                                onDisband={() => { if (confirm(`解散 小队 ${sid}?`)) execDisbandSquad(teamId, sid); }}
-                                                                adminSteamIds={serverState.admin_steam_ids}
-                                                            />
-                                                        ))}
-                                                        {us.length > 0 && (
-                                                            <SquadBlock
-                                                                squad={{ name: '未入队', creator: '', squad_id: null }}
-                                                                members={us}
-                                                                onAction={execPlayerAction}
-                                                                onDisband={null}
-                                                                adminSteamIds={serverState.admin_steam_ids}
-                                                                collapsed={false}
-                                                            />
-                                                        )}
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
+                                                        return (
+                                                            <div key={teamId} style={{
+                                                                flex: 1, overflowY: 'auto',
+                                                                borderLeft: idx === 1 ? '1px solid var(--border)' : 'none',
+                                                            }}>
+                                                                <div style={{
+                                                                    padding: '8px 12px', background: 'var(--bg3)',
+                                                                    display: 'flex', alignItems: 'center', gap: 6,
+                                                                    borderBottom: '1px solid var(--border)',
+                                                                    position: 'sticky', top: 0, zIndex: 1,
+                                                                }}>
+                                                                    <span style={{ fontSize: 14 }}>{factionFlag(team.faction)}</span>
+                                                                    <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>{team.faction}</span>
+                                                                    <span style={{ fontSize: 10, color: 'var(--text3)' }}>({cnt}人)</span>
+                                                                </div>
+                                                                {tp.length === 0 ? (
+                                                                    <div style={{ padding: 20, textAlign: 'center', color: 'var(--text3)', fontSize: 11 }}>暂无玩家</div>
+                                                                ) : (
+                                                                    <>
+                                                                        {ts.map((sq: any) => {
+                                                                            const members = sp(sq.squad_id);
+                                                                            return (
+                                                                                <SquadBlock
+                                                                                    key={sq.name}
+                                                                                    squad={sq}
+                                                                                    members={members}
+                                                                                    onAction={execPlayerAction}
+                                                                                    onDisband={() => { if (confirm(`解散 ${sq.name}?`)) execDisbandSquad(teamId, sq.squad_id); }}
+                                                                                    adminSteamIds={serverState.admin_steam_ids}
+                                                                                />
+                                                                            );
+                                                                        })}
+                                                                        {Array.from(orphanSquadIds).map(sid => (
+                                                                            <SquadBlock
+                                                                                key={`orphan-${sid}`}
+                                                                                squad={{ name: `小队 ${sid}`, creator: '—', squad_id: sid }}
+                                                                                members={sp(sid)}
+                                                                                onAction={execPlayerAction}
+                                                                                onDisband={() => { if (confirm(`解散 小队 ${sid}?`)) execDisbandSquad(teamId, sid); }}
+                                                                                adminSteamIds={serverState.admin_steam_ids}
+                                                                            />
+                                                                        ))}
+                                                                        {us.length > 0 && (
+                                                                            <SquadBlock
+                                                                                squad={{ name: '未入队', creator: '', squad_id: null }}
+                                                                                members={us}
+                                                                                onAction={execPlayerAction}
+                                                                                onDisband={null}
+                                                                                adminSteamIds={serverState.admin_steam_ids}
+                                                                                collapsed={false}
+                                                                            />
+                                                                        )}
+                                                                    </>
+                                                                )}
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </>
+                                            );
+                                        })()}
                                     </div>
                                 ) : (
                                     <div style={{ padding: 40, textAlign: 'center', color: 'var(--text3)' }}>
                                         {serverStateLoading ? '加载中...' : '点击右上角 🔄 刷新获取玩家列表'}
                                     </div>
-                                ))}
-
-                                {/* 封禁列表 */}
-                                {activeTab === 'bans' && (
-                                    bans.length > 0 ? (
-                                        <table style={{ fontSize: 12 }}>
-                                            <thead><tr>
-                                                <th style={{ padding: '10px 14px' }}>玩家</th>
-                                                <th style={{ padding: '10px 14px' }}>时长</th>
-                                                <th style={{ padding: '10px 14px' }}>原因</th>
-                                                <th style={{ padding: '10px 14px' }}>管理员</th>
-                                            </tr></thead>
-                                            <tbody>{bans.map((b, i) => (
-                                                <tr key={i}>
-                                                    <td style={{ padding: '8px 14px', fontWeight: 500 }}>{b.player_name}</td>
-                                                    <td style={{ padding: '8px 14px' }}><span className="badge red">{b.duration}</span></td>
-                                                    <td style={{ padding: '8px 14px', color: 'var(--text2)' }}>{b.reason}</td>
-                                                    <td style={{ padding: '8px 14px', color: 'var(--text3)' }}>{b.admin}</td>
-                                                </tr>
-                                            ))}</tbody>
-                                        </table>
-                                    ) : <div style={{ padding: 30, textAlign: 'center', color: 'var(--text3)' }}>✅ 无封禁记录</div>
                                 )}
 
-                                {/* 警告列表 */}
-                                {activeTab === 'warns' && (
-                                    warns.length > 0 ? (
-                                        <table style={{ fontSize: 12 }}>
-                                            <thead><tr>
-                                                <th style={{ padding: '10px 14px' }}>玩家</th>
-                                                <th style={{ padding: '10px 14px' }}>原因</th>
-                                                <th style={{ padding: '10px 14px' }}>管理员</th>
-                                            </tr></thead>
-                                            <tbody>{warns.map((w, i) => (
-                                                <tr key={i}>
-                                                    <td style={{ padding: '8px 14px', fontWeight: 500 }}>{w.player_name}</td>
-                                                    <td style={{ padding: '8px 14px', color: 'var(--text2)' }}>{w.reason}</td>
-                                                    <td style={{ padding: '8px 14px', color: 'var(--text3)' }}>{w.admin}</td>
-                                                </tr>
-                                            ))}</tbody>
-                                        </table>
-                                    ) : <div style={{ padding: 30, textAlign: 'center', color: 'var(--text3)' }}>✅ 无警告记录</div>
-                                )}
-                            </div>
-                        )}
-
-                        {/* ═══ 实时聊天 ═══ */}
-                        {rightTab === 'chat' && (
-                            <div style={{ height: 500, overflowY: 'auto', padding: '10px 0', display: 'flex', flexDirection: 'column' }}>
-                                {chatMsgs.length === 0 && <div style={{ color: 'var(--text3)', textAlign: 'center', padding: 60 }}>等待聊天消息...</div>}
-                                {chatMsgs.map((c, i) => (
-                                    <div key={i} style={{
-                                        padding: '5px 14px', display: 'flex', gap: 8, alignItems: 'baseline',
-                                        borderBottom: '1px solid var(--border)',
-                                        transition: 'background .1s',
-                                    }}>
-                                        <span style={{ color: 'var(--text3)', fontSize: 10, fontFamily: 'monospace', flexShrink: 0, width: 72, textAlign: 'right' }}>
-                                            {c.time.toLocaleTimeString()}
-                                        </span>
-                                        <span style={{
-                                            fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 3,
-                                            background: (CHANNEL_COLORS[c.channel] || '#a78bfa') + '22',
-                                            color: CHANNEL_COLORS[c.channel] || '#a78bfa',
-                                            flexShrink: 0, textTransform: 'uppercase',
-                                        }}>{c.channel}</span>
-                                        <span style={{ fontWeight: 600, fontSize: 12, flexShrink: 0, color: 'var(--text)' }}>{c.player}</span>
-                                        <span style={{ color: 'var(--text2)', fontSize: 12, wordBreak: 'break-word' }}>{c.message}</span>
-                                    </div>
-                                ))}
-                                <div ref={chatEndRef} />
-                            </div>
-                        )}
-
-                        {/* ═══ 系统日志 ═══ */}
-                        {rightTab === 'logs' && (
-                            <div style={{ height: 500, overflowY: 'auto', padding: '10px 0', fontFamily: "'JetBrains Mono', 'Fira Code', monospace", fontSize: 11 }}>
-                                {logs.length === 0 && <div style={{ color: 'var(--text3)', textAlign: 'center', padding: 60 }}>等待日志...</div>}
-                                {logs.map((entry, i) => (
-                                    <div key={i} style={{
-                                        padding: '3px 14px', display: 'flex', gap: 8, alignItems: 'baseline',
-                                        borderBottom: '1px solid var(--border)',
-                                        lineHeight: 1.7,
-                                    }}>
-                                        <span style={{ color: 'var(--text3)', flexShrink: 0, fontSize: 10 }}>
-                                            [{new Date(entry.logged_at).toLocaleTimeString()}]
-                                        </span>
-                                        <span style={{
-                                            color: LOG_LEVEL_COLORS[entry.log_level] || 'var(--text3)',
-                                            flexShrink: 0, fontSize: 10, fontWeight: 600,
-                                        }}>
-                                            {entry.log_level}
-                                        </span>
-                                        <span style={{ color: 'var(--text2)', flexShrink: 0, fontSize: 10, opacity: 0.7 }}>
-                                            [{entry.category || 'General'}]
-                                        </span>
-                                        <span style={{ color: 'var(--text2)', wordBreak: 'break-all' }}>{entry.message}</span>
-                                    </div>
-                                ))}
-                                <div ref={logsEndRef} style={{ height: 1 }} />
                             </div>
                         )}
                     </div>
