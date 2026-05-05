@@ -3,22 +3,10 @@ use std::time::Instant;
 
 const TIMEOUT_SECS: u64 = 60;
 
-#[derive(Clone, Debug, PartialEq)]
-enum SwitchPhase {
-    AwaitingClaim,
-    AwaitingAdmin,
-}
-
 #[derive(Clone, Debug)]
 struct PendingSwitch {
     tag: String,
     requester_name: String,
-    requester_player_id: i32,
-    requester_team_id: i32,
-    claimer_name: Option<String>,
-    claimer_player_id: Option<i32>,
-    claimer_team_id: Option<i32>,
-    phase: SwitchPhase,
     created_at: Instant,
 }
 
@@ -26,37 +14,34 @@ pub struct TeamSwitchManager {
     pending: HashMap<String, Vec<PendingSwitch>>,
 }
 
-/// 解析标签消息，返回 (action, tag)
-/// action: "tb" | "rl" | "ty"
-/// tag: 标签内容（可能为空字符串）
+/// 生成 4 位随机标识
+fn generate_tag() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .subsec_nanos();
+    format!("{:04}", nanos % 10000)
+}
+
+/// 解析消息，返回 (action, tag)
+/// action: "sq_tb" (玩家发起) | "approve" (管理员同意并执行)
 fn parse_tagged_message(msg: &str) -> Option<(&'static str, String)> {
     let msg = msg.trim();
-
-    // === English prefixes (case-insensitive) ===
     let lower = msg.to_lowercase();
 
-    // tb<tag>
-    if let Some(tag) = lower.strip_prefix("tb") {
-        return Some(("tb", tag.to_string()));
-    }
-    // rl<tag>
-    if let Some(tag) = lower.strip_prefix("rl") {
-        return Some(("rl", tag.to_string()));
-    }
-    // ty<tag>
-    if let Some(tag) = lower.strip_prefix("ty") {
-        return Some(("ty", tag.to_string()));
+    // sqtb: 玩家发起跳边
+    if lower == "sqtb" {
+        return Some(("sq_tb", String::new()));
     }
 
-    // === Chinese prefixes ===
-    if let Some(tag) = msg.strip_prefix("跳边") {
-        return Some(("tb", tag.to_string()));
-    }
-    if let Some(tag) = msg.strip_prefix("认领") {
-        return Some(("rl", tag.to_string()));
-    }
-    if let Some(tag) = msg.strip_prefix("同意") {
-        return Some(("ty", tag.to_string()));
+    // tb<tag>: 管理员批准并执行
+    if let Some(tag) = lower.strip_prefix("tb") {
+        let tag = tag.trim().to_string();
+        if !tag.is_empty() {
+            return Some(("approve", tag));
+        }
+        return None;
     }
 
     None
@@ -81,13 +66,11 @@ impl TeamSwitchManager {
             return vec![];
         };
 
-        // 规范 tag：trim 后转小写
         let tag = tag.trim().to_lowercase();
 
         match action {
-            "tb" => self.handle_tb(server_id, player_name, &tag, state),
-            "rl" => self.handle_claim(server_id, player_name, &tag, state),
-            "ty" => self.handle_admin_approve(server_id, player_name, &tag, state),
+            "sq_tb" => self.handle_sqtb(server_id, player_name, &tag, state),
+            "approve" => self.handle_approve(server_id, player_name, &tag, state),
             _ => vec![],
         }
     }
@@ -95,29 +78,29 @@ impl TeamSwitchManager {
     // ====== 从 state 中查找玩家 ======
     fn find_player<'a>(&self, player_name: &str, state: &'a serde_json::Value) -> Option<&'a serde_json::Value> {
         let players = state["players"].as_array()?;
-        // 精确匹配
         if let Some(p) = players.iter().find(|p| p["name"].as_str() == Some(player_name)) {
             return Some(p);
         }
-        // 大小写不敏感
         let lower = player_name.to_lowercase();
-        if let Some(p) = players.iter().find(|p| {
+        players.iter().find(|p| {
             p["name"].as_str().map(|n| n.to_lowercase() == lower).unwrap_or(false)
-        }) {
-            return Some(p);
-        }
-        // 未找到：打印调试信息
-        let names: Vec<&str> = players.iter()
-            .filter_map(|p| p["name"].as_str())
-            .take(10)
-            .collect();
-        tracing::warn!(
-            target_player = %player_name,
-            player_count = players.len(),
-            state_player_names = ?names,
-            "代码跳边: find_player 未找到玩家"
-        );
-        None
+        })
+    }
+
+    // ====== 获取在线管理员列表 ======
+    fn get_admin_players<'a>(&self, state: &'a serde_json::Value) -> Vec<&'a serde_json::Value> {
+        let admin_ids: Vec<&str> = state["admin_steam_ids"]
+            .as_array()
+            .map(|ids| ids.iter().filter_map(|id| id.as_str()).collect())
+            .unwrap_or_default();
+
+        state["players"].as_array().map(|players| {
+            players.iter().filter(|p| {
+                if p["is_admin"].as_bool().unwrap_or(false) { return true; }
+                let sid = p["steam_id"].as_str().unwrap_or("");
+                !sid.is_empty() && admin_ids.iter().any(|id| *id == sid)
+            }).collect()
+        }).unwrap_or_default()
     }
 
     // ====== 检查是否是管理员 ======
@@ -138,12 +121,12 @@ impl TeamSwitchManager {
         }).unwrap_or(false)
     }
 
-    // ====== Phase 1: 玩家请求跳边 (tb) ======
-    fn handle_tb(
+    // ====== 玩家发起 (sqtb) ======
+    fn handle_sqtb(
         &mut self,
         server_id: &str,
         player_name: &str,
-        tag: &str,
+        _tag: &str,
         state: Option<&serde_json::Value>,
     ) -> Vec<String> {
         let Some(state) = state else {
@@ -161,100 +144,75 @@ impl TeamSwitchManager {
         };
 
         let requester_name = player["name"].as_str().unwrap_or(player_name).to_string();
-        let requester_player_id = player["player_id"].as_i64().unwrap_or(0) as i32;
-        let requester_team_id = player["team_id"].as_i64().unwrap_or(0) as i32;
 
-        if requester_player_id == 0 {
-            return vec![format!(
-                "AdminBroadcast \"{} 发送了跳边请求，但未能获取你的玩家ID，请等待状态刷新后重试\"",
-                requester_name
-            )];
+        // 检查是否已有进行中的请求
+        {
+            let entries = self.pending.entry(server_id.to_string()).or_default();
+            if let Some(existing) = entries.iter_mut().find(|r| r.requester_name == requester_name) {
+                existing.created_at = Instant::now();
+                let tag = existing.tag.clone();
+
+                let mut cmds = vec![
+                    format!(
+                        "AdminWarn \"{}\" \"您已经在一分钟之内申请过了，请耐心等待\"",
+                        requester_name
+                    ),
+                    format!(
+                        "AdminBroadcast \"{} 重新申请跳边，请管理员输入 tb{} 同意，拒绝则忽略\"",
+                        requester_name, tag
+                    ),
+                ];
+
+                for admin in self.get_admin_players(state) {
+                    if let Some(admin_name) = admin["name"].as_str() {
+                        cmds.push(format!(
+                            "AdminWarn \"{}\" \"{} 重新申请跳边，同意请在聊天框输入 tb{}，拒绝则忽略\"",
+                            admin_name, requester_name, tag
+                        ));
+                    }
+                }
+
+                return cmds;
+            }
         }
 
-        let effective_tag = if tag.is_empty() {
-            requester_name.to_lowercase()
-        } else {
-            tag.to_string()
+        // 新请求：生成随机 tag
+        let entries = self.pending.entry(server_id.to_string()).or_default();
+        let tag = loop {
+            let t = generate_tag();
+            if !entries.iter().any(|r| r.tag == t) {
+                break t;
+            }
         };
 
-        // 检查同 tag 是否有进行中的请求
-        let entries = self.pending.entry(server_id.to_string()).or_default();
-        if entries.iter().any(|r| r.tag == effective_tag) {
-            return vec![format!(
-                "AdminBroadcast \"标签 '{}' 已有进行中的跳边请求，请使用其他标签重试\"",
-                effective_tag
-            )];
-        }
-
         entries.push(PendingSwitch {
-            tag: effective_tag.clone(),
+            tag: tag.clone(),
             requester_name: requester_name.clone(),
-            requester_player_id,
-            requester_team_id,
-            claimer_name: None,
-            claimer_player_id: None,
-            claimer_team_id: None,
-            phase: SwitchPhase::AwaitingClaim,
             created_at: Instant::now(),
         });
 
-        vec![format!(
-            "AdminBroadcast \"{} 申请跳边，请对面阵营玩家发送 rl{} 或 认领{} 认领该玩家，如一分钟内无认领则失效\"",
-            requester_name, effective_tag, effective_tag
-        )]
+        let mut cmds = vec![
+            format!(
+                "AdminBroadcast \"{} 申请跳边，请管理员输入 tb{} 审批跳边申请\"",
+                requester_name, tag
+            ),
+        ];
+
+        // 对每个在线管理员发送 AdminWarn
+        for admin in self.get_admin_players(state) {
+            if let Some(admin_name) = admin["name"].as_str() {
+                cmds.push(format!(
+                    "AdminWarn \"{}\" \"{} 申请跳边，同意请在聊天框输入 tb{}，拒绝则忽略\"",
+                    admin_name, requester_name, tag
+                ));
+            }
+        }
+
+        cmds
     }
 
-    // ====== Phase 2: 对面玩家认领 (rl) ======
-    fn handle_claim(
-        &mut self,
-        server_id: &str,
-        claimer_name: &str,
-        tag: &str,
-        state: Option<&serde_json::Value>,
-    ) -> Vec<String> {
-        let Some(state) = state else { return vec![] };
-        let Some(claimer) = self.find_player(claimer_name, state) else { return vec![] };
-
-        let claimer_display_name = claimer["name"].as_str().unwrap_or(claimer_name).to_string();
-        let claimer_team_id = claimer["team_id"].as_i64().unwrap_or(0) as i32;
-        let claimer_player_id = claimer["player_id"].as_i64().unwrap_or(0) as i32;
-
-        let entries = self.pending.get_mut(server_id);
-        let Some(entries) = entries else { return vec![] };
-
-        // 查找匹配的 AwaitingClaim 请求
-        let req_idx = entries.iter().position(|r| {
-            let tag_match = if tag.is_empty() {
-                true // 无 tag 则匹配第一个
-            } else {
-                r.tag == tag
-            };
-            tag_match
-                && r.phase == SwitchPhase::AwaitingClaim
-                && claimer_team_id != r.requester_team_id
-                && claimer_team_id != 0
-        });
-
-        let Some(req_idx) = req_idx else { return vec![] };
-        let req = &mut entries[req_idx];
-
-        let requester_name = req.requester_name.clone();
-        req.claimer_name = Some(claimer_display_name.clone());
-        req.claimer_player_id = Some(claimer_player_id);
-        req.claimer_team_id = Some(claimer_team_id);
-        req.phase = SwitchPhase::AwaitingAdmin;
-        req.created_at = Instant::now();
-
-        let effective_tag = &req.tag;
-
-        vec![format!(
-            "AdminBroadcast \"{} 已被 {} 认领，请服务器内管理员发送 ty{} 或 同意{} 同意玩家跳边申请，拒绝则忽略，该申请在一分钟内失效\"",
-            requester_name, claimer_display_name, effective_tag, effective_tag
-        )]
-    }
-
-    // ====== Phase 3: 管理员批准 (ty) ======
-    fn handle_admin_approve(
+    // ====== 管理员批准 (tbxxx) ======
+    fn handle_approve(
         &mut self,
         server_id: &str,
         admin_name: &str,
@@ -262,35 +220,20 @@ impl TeamSwitchManager {
         state: Option<&serde_json::Value>,
     ) -> Vec<String> {
         let Some(state) = state else { return vec![] };
-
-        if !self.check_is_admin(admin_name, state) {
-            return vec![];
-        }
+        if !self.check_is_admin(admin_name, state) { return vec![]; }
 
         let entries = self.pending.get_mut(server_id);
         let Some(entries) = entries else { return vec![] };
 
-        let req_idx = entries.iter().position(|r| {
-            let tag_match = if tag.is_empty() {
-                true
-            } else {
-                r.tag == tag
-            };
-            tag_match && r.phase == SwitchPhase::AwaitingAdmin && r.claimer_name.is_some()
-        });
-
+        let req_idx = entries.iter().position(|r| r.tag == tag);
         let Some(req_idx) = req_idx else { return vec![] };
         let req = entries.remove(req_idx);
 
-        let requester_name = req.requester_name;
-        let requester_player_id = req.requester_player_id;
-        let claimer_name = req.claimer_name.unwrap_or_default();
-
         vec![
-            format!("AdminForceTeamChange {}", requester_player_id),
+            format!("AdminForceTeamChange \"{}\"", req.requester_name),
             format!(
-                "AdminBroadcast \"{} 已跳边至 {} 所在队伍\"",
-                requester_name, claimer_name
+                "AdminBroadcast \"管理员 {} 已同意 {} 的跳边申请，执行跳边\"",
+                admin_name, req.requester_name
             ),
         ]
     }

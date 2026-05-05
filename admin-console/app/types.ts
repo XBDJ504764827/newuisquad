@@ -9,7 +9,8 @@ export type PageId =
   | 'config-panel'
   | 'action-logs'
   | 'player-info'
-  | 'admin-users';
+  | 'admin-users'
+  | 'permission-settings';
 
 export interface NavItemDef {
   id: PageId;

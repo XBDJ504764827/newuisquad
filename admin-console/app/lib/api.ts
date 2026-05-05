@@ -15,5 +15,14 @@ export function api(path: string, init?: RequestInit): Promise<Response> {
     for (const [k, v] of Object.entries(authHeaders)) {
         headers.set(k, v);
     }
-    return fetch(`${API_BASE}${path}`, { ...init, headers });
+    return fetch(`${API_BASE}${path}`, { ...init, headers }).then(res => {
+        if (res.status === 401) {
+            try { localStorage.removeItem('token'); } catch {}
+            try { localStorage.removeItem('username'); } catch {}
+            try { localStorage.removeItem('role'); } catch {}
+            try { localStorage.removeItem('permissions'); } catch {}
+            window.location.reload();
+        }
+        return res;
+    });
 }

@@ -15,6 +15,7 @@ import ConfigPanelPage from './components/pages/ConfigPanelPage';
 import ActionLogsPage from './components/pages/ActionLogsPage';
 import PlayerInfoPage from './components/pages/PlayerInfoPage';
 import AdminUsersPage from './components/pages/AdminUsersPage';
+import PermissionSettingsPage from './components/pages/PermissionSettingsPage';
 import { PageId } from './types';
 
 const pageComponents: Record<PageId, React.ComponentType> = {
@@ -29,6 +30,7 @@ const pageComponents: Record<PageId, React.ComponentType> = {
   'action-logs': ActionLogsPage,
   'player-info': PlayerInfoPage,
   'admin-users': AdminUsersPage,
+  'permission-settings': PermissionSettingsPage,
 };
 
 const breadcrumbMap: Record<PageId, { cat: string; page: string }> = {
@@ -41,6 +43,7 @@ const breadcrumbMap: Record<PageId, { cat: string; page: string }> = {
   'action-logs': { cat: '日志系统', page: '操作记录' },
   'player-info': { cat: '玩家管理', page: '玩家信息' },
   'admin-users': { cat: '玩家管理', page: '网站管理员' },
+  'permission-settings': { cat: '玩家管理', page: '用户权限设置' },
   'config-file': { cat: '系统配置', page: '配置文件' },
   'config-panel': { cat: '系统配置', page: '配置面板' },
 };
