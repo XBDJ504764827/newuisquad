@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useServers } from '../../lib/useServers';
 import { api } from '../../lib/api';
 import { ServerInfoBar, factionFlag } from './ControlPanel/ServerInfoBar';
+import type { ServerInfo as SvrInfo, ServerState, ServerInfoDisplay, PlayerState } from '../../types';
 import { LeftSidePanel } from './ControlPanel/LeftSidePanel';
 import { SquadBlock } from './ControlPanel/SquadBlock';
 import { Modal } from './ControlPanel/Modal';
@@ -12,11 +13,11 @@ interface LogEntry { log_level: string; category: string | null; message: string
 interface ChatMsg { time: Date; player: string; message: string; channel: string; }
 interface BanEntry { player_name: string; steam_id: string; duration: string; reason: string; admin: string; }
 interface WarnEntry { player_name: string; steam_id: string; reason: string; admin: string; }
-interface ServerInfo { server_name: string; player_count: number; max_players: number; map_name: string; game_mode: string; next_map: string; next_layer: string; }
+interface ServerInfoLocal { server_name: string; player_count: number; max_players: number; map_name: string; game_mode: string; next_map: string; next_layer: string; }
 
 export default function ControlPanelPage() {
     const { servers } = useServers();
-    const [selectedServer, setSelectedServer] = useState<any>(null);
+    const [selectedServer, setSelectedServer] = useState<SvrInfo | null>(null);
     const [showAddModal, setShowAddModal] = useState(false);
     const [logs, setLogs] = useState<LogEntry[]>([]);
     const [chatMsgs, setChatMsgs] = useState<ChatMsg[]>([]);
@@ -38,7 +39,7 @@ export default function ControlPanelPage() {
     const [deleting, setDeleting] = useState(false);
     const [deleteTarget, setDeleteTarget] = useState<any>(null);
     const [deleteError, setDeleteError] = useState('');
-    const [serverState, setServerState] = useState<any>(null);
+    const [serverState, setServerState] = useState<ServerState | null>(null);
     const [serverStateLoading, setServerStateLoading] = useState(false);
     const [actionMsg, setActionMsg] = useState('');
     // 暖服作弊开关状态: null=未知, true=开启, false=关闭
@@ -50,7 +51,7 @@ export default function ControlPanelPage() {
     const [autoRefresh, setAutoRefresh] = useState(true);
     const [bans, setBans] = useState<BanEntry[]>([]);
     const [warns, setWarns] = useState<WarnEntry[]>([]);
-    const [serverInfo, setServerInfo] = useState<ServerInfo | null>(null);
+    const [serverInfo, setServerInfo] = useState<ServerInfoLocal | null>(null);
     const [broadcastMsg, setBroadcastMsg] = useState('');
     const [rightTab, setRightTab] = useState<'control' | 'chat' | 'logs'>('control');
 
@@ -81,7 +82,8 @@ export default function ControlPanelPage() {
             if (cancelled) return;
             const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const token = localStorage.getItem('token') || '';
-            const ws = new WebSocket(`${proto}//${window.location.host}/api/v1/servers/${selectedServer.id}/logs/stream?token=${encodeURIComponent(token)}`);
+            const srv = selectedServer!;
+            const ws = new WebSocket(`${proto}//${window.location.host}/api/v1/servers/${srv.id}/logs/stream?token=${encodeURIComponent(token)}`);
 
             ws.onopen = () => {
                 reconnectAttemptRef.current = 0;
@@ -203,8 +205,33 @@ export default function ControlPanelPage() {
 
     useEffect(() => {
         if (!autoRefresh || !selectedServer) return;
-        const timer = setInterval(() => { fetchServerState(); fetchBansWarns(); }, 3000);
-        return () => clearInterval(timer);
+        let timer: ReturnType<typeof setInterval> | null = null;
+
+        function startPolling() {
+            if (timer) return;
+            timer = setInterval(() => { fetchServerState(); fetchBansWarns(); }, 3000);
+        }
+
+        function stopPolling() {
+            if (timer) { clearInterval(timer); timer = null; }
+        }
+
+        function onVisibilityChange() {
+            if (document.hidden) {
+                stopPolling();
+            } else {
+                fetchServerState(); fetchBansWarns(); // 恢复时立即刷新
+                startPolling();
+            }
+        }
+
+        document.addEventListener('visibilitychange', onVisibilityChange);
+        startPolling();
+
+        return () => {
+            stopPolling();
+            document.removeEventListener('visibilitychange', onVisibilityChange);
+        };
     }, [autoRefresh, selectedServer, fetchServerState, fetchBansWarns]);
 
     const sendRcon = useCallback(async (cmd?: string) => {

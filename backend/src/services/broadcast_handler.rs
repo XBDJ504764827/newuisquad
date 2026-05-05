@@ -70,7 +70,7 @@ fn parse_chat(line: &str) -> Option<(String, String, String)> {
 pub fn start_broadcast_handler(
     pool: PgPool,
     mut log_rx: tokio::sync::broadcast::Receiver<LogEntry>,
-) {
+) -> tokio::task::JoinHandle<()> {
     tracing::info!("广播处理服务已启动");
 
     // 定时通告循环
@@ -220,7 +220,7 @@ pub fn start_broadcast_handler(
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             }
         }
-    });
+    })
 }
 
 async fn send_rcon(ip: &str, port: u16, password: &str, command: &str) -> Result<(), String> {

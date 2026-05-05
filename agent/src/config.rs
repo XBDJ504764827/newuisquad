@@ -10,6 +10,7 @@ pub struct Config {
     pub rcon_host: String,
     pub rcon_port: u16,
     pub rcon_password: String,
+    pub rcon_poll_interval_secs: u64,
     pub auto_broadcast_interval_secs: u64,
     pub auto_broadcast_message: String,
     pub welcome_message: String,
@@ -31,6 +32,8 @@ impl Config {
         let rcon_host = env::var("RCON_HOST").unwrap_or_else(|_| "127.0.0.1".into());
         let rcon_port: u16 = env::var("RCON_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(28016);
         let rcon_password = env::var("RCON_PASSWORD").unwrap_or_default();
+        let rcon_poll_interval_secs: u64 = env::var("RCON_POLL_INTERVAL")
+            .ok().and_then(|v| v.parse().ok()).unwrap_or(3);
         let auto_broadcast_interval_secs: u64 = env::var("AUTO_BROADCAST_INTERVAL")
             .ok().and_then(|v| v.parse().ok()).unwrap_or(0);
         let auto_broadcast_message = env::var("AUTO_BROADCAST_MESSAGE")
@@ -46,6 +49,6 @@ impl Config {
         eprintln!("[Config] RCON           = {}:{}", rcon_host, rcon_port);
         eprintln!("[Config] ADMINS_CFG     = {}", admins_cfg_path);
 
-        Self { backend_ws_url, token, log_file_path, game_dir, config_dir, rcon_host, rcon_port, rcon_password, auto_broadcast_interval_secs, auto_broadcast_message, welcome_message, admins_cfg_path }
+        Self { backend_ws_url, token, log_file_path, game_dir, config_dir, rcon_host, rcon_port, rcon_password, rcon_poll_interval_secs, auto_broadcast_interval_secs, auto_broadcast_message, welcome_message, admins_cfg_path }
     }
 }

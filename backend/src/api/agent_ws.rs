@@ -25,7 +25,7 @@ pub struct AgentPool {
 
 impl AgentPool {
     pub fn new() -> Self {
-        let (log_tx, _) = broadcast::channel::<LogEntry>(1024);
+        let (log_tx, _) = broadcast::channel::<LogEntry>(8192);
         Self {
             agents: Arc::new(RwLock::new(HashMap::new())),
             log_tx,

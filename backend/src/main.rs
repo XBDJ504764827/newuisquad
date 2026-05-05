@@ -45,14 +45,15 @@ async fn main() -> anyhow::Result<()> {
         server_states: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         team_switch_cache: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         log_batcher,
+        rate_limiter: api::rate_limiter::RateLimiterState::new(),
     };
 
-    // 启动误杀检测服务
-    services::tk_service::start_tk_monitor(pool.clone(), log_rx1);
+    // 启动误杀检测服务（保存 JoinHandle 用于优雅关闭）
+    let tk_handle = services::tk_service::start_tk_monitor(pool.clone(), log_rx1);
     // 启动广播处理服务
-    services::broadcast_handler::start_broadcast_handler(pool.clone(), log_rx2);
+    let bc_handle = services::broadcast_handler::start_broadcast_handler(pool.clone(), log_rx2);
     // 启动伤害/TK通知服务
-    services::damage_notify_service::start_damage_notify(pool, log_rx3);
+    let dn_handle = services::damage_notify_service::start_damage_notify(pool, log_rx3);
 
     let cors = if config.allowed_origin == "*" {
         CorsLayer::new()
@@ -72,7 +73,29 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("服务器监听: {}", addr);
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, router).await?;
+
+    // 优雅关闭：捕获 SIGTERM/Ctrl+C，等待后台任务完成
+    let server_handle = tokio::spawn(async move {
+        axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>()).await
+    });
+
+    tokio::select! {
+        result = server_handle => {
+            result??;
+        }
+        _ = tokio::signal::ctrl_c() => {
+            tracing::info!("收到关闭信号，等待后台任务完成...");
+        }
+    }
+
+    // 等待后台服务任务结束（最多 10 秒超时）
+    let _ = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        async {
+            let _ = tokio::join!(tk_handle, bc_handle, dn_handle);
+        }
+    ).await;
+    tracing::info!("服务已关闭");
 
     Ok(())
 }

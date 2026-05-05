@@ -193,7 +193,7 @@ fn parse_chat(line: &str) -> Option<(String, String, String)> {
 pub fn start_tk_monitor(
     pool: PgPool,
     mut log_rx: tokio::sync::broadcast::Receiver<LogEntry>,
-) {
+) -> tokio::task::JoinHandle<()> {
     let tracker = Arc::new(RwLock::new(TkTracker::new()));
 
     tokio::spawn(async move {
@@ -282,7 +282,7 @@ pub fn start_tk_monitor(
                 }
             }
         }
-    });
+    })
 }
 
 async fn send_rcon_warn(ip: &str, port: u16, password: &str, player_name: &str, message: &str) -> Result<(), String> {

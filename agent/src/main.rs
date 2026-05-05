@@ -58,6 +58,7 @@ async fn main() -> anyhow::Result<()> {
             config.rcon_password.clone(),
             to_ws_tx.clone(),
             rcon_cmd_rx,
+            config.rcon_poll_interval_secs,
             config.auto_broadcast_interval_secs,
             config.auto_broadcast_message.clone(),
             config.welcome_message.clone(),

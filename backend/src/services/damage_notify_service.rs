@@ -22,7 +22,7 @@ pub async fn update(pool: &PgPool, server_id: i32, req: UpdateDamageNotifyReques
 pub fn start_damage_notify(
     pool: PgPool,
     mut log_rx: tokio::sync::broadcast::Receiver<LogEntry>,
-) {
+) -> tokio::task::JoinHandle<()> {
     let cooldowns: Arc<RwLock<HashMap<(i32, String, String), Instant>>> = Arc::new(RwLock::new(HashMap::new()));
 
     tokio::spawn(async move {
@@ -85,7 +85,7 @@ pub fn start_damage_notify(
             }
         }
         tracing::info!("伤害通知服务已停止");
-    });
+    })
 }
 
 fn build_notify_commands(

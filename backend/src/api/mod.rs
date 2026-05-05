@@ -21,6 +21,7 @@ pub mod auth;
 pub mod auth_middleware;
 pub mod chat;
 pub mod squadjs_report;
+pub mod rate_limiter;
 pub mod team_switch;
 
 use axum::{Router, routing::{get, post, put}};
@@ -30,6 +31,7 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 use crate::models::server_log::LogEntry;
 use crate::api::agent_ws::AgentPool;
+use crate::api::rate_limiter::RateLimiterState;
 use crate::services::log_batcher::LogBatcher;
 
 #[derive(Clone)]
@@ -45,17 +47,23 @@ pub struct AppState {
     pub team_switch_cache: Arc<tokio::sync::RwLock<std::collections::HashMap<i32, bool>>>,
     // 批量日志写入器
     pub log_batcher: LogBatcher,
+    pub rate_limiter: RateLimiterState,
 }
 
 pub fn build_router(state: AppState) -> Router {
+    // 登录路由（更严格的限流）
+    let login = Router::new()
+        .route("/api/v1/auth/login", post(auth::login))
+        .layer(from_fn(rate_limiter::login_rate_limit));
+
     // 公开路由（无需认证）
     let public = Router::new()
-        .route("/api/v1/auth/login", post(auth::login))
+        .merge(login)
         .route("/api/v1/auth/verify", post(auth::verify_token))
         .route("/agent/connect", get(agent_ws::handler))
         .route("/api/v1/servers/{id}/squadjs/update", post(squadjs_report::handler));
 
-    // 受保护路由（需要 Bearer Token 认证）
+    // 受保护路由（需要 Bearer Token 认证 + 通用限流）
     let protected = Router::new()
         .route("/api/v1/servers", get(server_info::list).post(servers::create))
         .route("/api/v1/servers/{id}", get(server_info::get_one).put(server_info::update).delete(server_info::delete))
@@ -96,11 +104,13 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v1/operation-logs", get(operation_logs::list))
         .route("/api/v1/admins", get(admin_users::list).post(admin_users::create))
         .route("/api/v1/admins/{id}", put(admin_users::update).delete(admin_users::delete))
+        .layer(from_fn(rate_limiter::rate_limit))
         .layer(from_fn(auth_middleware::require_auth));
 
     Router::new()
         .merge(public)
         .merge(protected)
         .with_state(state.clone())
+        .layer(axum::Extension(state.rate_limiter.clone()))
         .layer(axum::Extension(state.jwt_secret.clone()))
 }

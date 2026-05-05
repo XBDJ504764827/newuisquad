@@ -9,6 +9,7 @@ pub fn start_rcon_listener(
     host: String, port: u16, password: String,
     msg_tx: mpsc::Sender<AgentMessage>,
     mut rcon_cmd_rx: mpsc::Receiver<String>,
+    poll_interval_secs: u64,
     auto_broadcast_secs: u64, auto_broadcast_msg: String, welcome_msg: String,
     admins_cfg_path: String,
 ) {
@@ -36,9 +37,9 @@ pub fn start_rcon_listener(
             // 读取 Admins.cfg 获取管理员 SteamID 列表
             let admin_steam_ids = parse_admins_cfg(&admins_cfg_path);
             let mut buf = [0u8; 65536];
-            let mut partial: Vec<u8> = Vec::new();
+            let mut partial: Vec<u8> = Vec::with_capacity(65536);
             // 设为 3 秒前，让首次状态查询立即执行
-            let mut last_query = Instant::now() - Duration::from_secs(3);
+            let mut last_query = Instant::now() - Duration::from_secs(poll_interval_secs);
             // RCON 命令 ID 计数器（每个命令唯一 ID）
             let mut cmd_id: i32 = 100;
             // 按 ID 累积响应: id → (type, data)
@@ -50,8 +51,8 @@ pub fn start_rcon_listener(
             let mut server_info_json = String::new();
 
             loop {
-                // 每 3 秒查询状态
-                if last_query.elapsed().as_secs() >= 3 {
+                // 按配置间隔查询状态
+                if last_query.elapsed().as_secs() >= poll_interval_secs {
                     // 将 pending 中已完成的响应转移到对应的数据区
                     let mut new_players = String::new();
                     let mut new_squads = String::new();
@@ -154,6 +155,10 @@ pub fn start_rcon_listener(
                 match s.read(&mut buf) {
                     Ok(0) => { eprintln!("[RCON] 断开"); break; }
                     Ok(n) => {
+                        if partial.len() + n > 65536 {
+                            eprintln!("[RCON] 缓冲溢出 ({} bytes)，重置", partial.len() + n);
+                            partial.clear();
+                        }
                         partial.extend_from_slice(&buf[..n]);
                         while let Some((pkt, rest)) = extract(&partial) {
                             partial = rest;
@@ -541,21 +546,9 @@ fn parse_admins_cfg(path: &str) -> Vec<String> {
     };
     let mut ids = Vec::new();
     for line in content.lines() {
-        // 匹配格式: Admins=(Group="...", SteamID=7656119xxxxxxxxxx)
-        // 提取所有 17 位 SteamID64（以 7656119 开头）
-        let mut i = 0;
-        while i < line.len() {
-            let rest = &line[i..];
-            let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-            let dlen = digits.len();
-            if dlen == 17 && digits.starts_with("7656119") {
-                let before = i == 0 || !line[..i].chars().last().map_or(false, |c| c.is_ascii_digit());
-                let after = i + 17 >= line.len() || !line[i+17..].chars().next().map_or(false, |c| c.is_ascii_digit());
-                if before && after && !ids.contains(&digits) {
-                    ids.push(digits);
-                }
-            }
-            if dlen > 0 { i += dlen; } else { i += rest.chars().next().map_or(0, |c| c.len_utf8()); }
+        let sid = find_steam64_in_line(line);
+        if !sid.is_empty() && !ids.contains(&sid) {
+            ids.push(sid);
         }
     }
     eprintln!("[RCON] 从 Admins.cfg 解析到 {} 个管理员 SteamID", ids.len());
