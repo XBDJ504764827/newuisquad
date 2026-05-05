@@ -3,7 +3,7 @@ use tokio::sync::mpsc;
 
 pub async fn handle_command(
     cmd: AgentMessage,
-    msg_tx: &mpsc::UnboundedSender<AgentMessage>,
+    msg_tx: &mpsc::Sender<AgentMessage>,
     game_dir: &str,
 ) {
     match cmd {
@@ -18,7 +18,7 @@ pub async fn handle_command(
                                 path,
                                 content: Some(content),
                                 error: None,
-                            });
+                            }).await;
                         }
                         Err(e) => {
                             let _ = msg_tx.send(AgentMessage::FileReadResult {
@@ -27,7 +27,7 @@ pub async fn handle_command(
                                 path,
                                 content: None,
                                 error: Some(format!("读取失败: {}", e)),
-                            });
+                            }).await;
                         }
                     }
                 }
@@ -38,7 +38,7 @@ pub async fn handle_command(
                         path,
                         content: None,
                         error: Some(e),
-                    });
+                    }).await;
                 }
             }
         }
@@ -56,7 +56,7 @@ pub async fn handle_command(
                                 success: true,
                                 path,
                                 error: None,
-                            });
+                            }).await;
                         }
                         Err(e) => {
                             let _ = msg_tx.send(AgentMessage::FileWriteResult {
@@ -64,7 +64,7 @@ pub async fn handle_command(
                                 success: false,
                                 path,
                                 error: Some(format!("写入失败: {}", e)),
-                            });
+                            }).await;
                         }
                     }
                 }
@@ -74,7 +74,7 @@ pub async fn handle_command(
                         success: false,
                         path,
                         error: Some(e),
-                    });
+                    }).await;
                 }
             }
         }
@@ -83,7 +83,7 @@ pub async fn handle_command(
                 Ok(full_dir) => {
                     match list_dir(&full_dir).await {
                         Ok(files) => {
-                            let _ = msg_tx.send(AgentMessage::FileListResult { request_id, files });
+                            let _ = msg_tx.send(AgentMessage::FileListResult { request_id, files }).await;
                         }
                         Err(e) => {
                             let _ = msg_tx.send(AgentMessage::FileListResult {
@@ -92,7 +92,7 @@ pub async fn handle_command(
                                     name: format!("错误: {}", e),
                                     size: 0,
                                 }],
-                            });
+                            }).await;
                         }
                     }
                 }
@@ -103,7 +103,7 @@ pub async fn handle_command(
                             name: format!("错误: {}", e),
                             size: 0,
                         }],
-                    });
+                    }).await;
                 }
             }
         }

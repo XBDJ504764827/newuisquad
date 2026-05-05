@@ -33,13 +33,18 @@ async fn main() -> anyhow::Result<()> {
     // 初始化默认管理员
     init_admin(&pool, &config).await?;
 
+    // 初始化批量日志写入器
+    let log_batcher = services::log_batcher::LogBatcher::new(pool.clone());
+
     let state = api::AppState {
         pool: pool.clone(),
         log_broadcast: Some(Arc::new(log_tx)),
         agent_pool: Some(agent_pool),
         steam_api_key: config.steam_api_key.clone(),
         jwt_secret: config.jwt_secret.clone(),
-        server_states: Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
+        server_states: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+        team_switch_cache: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+        log_batcher,
     };
 
     // 启动误杀检测服务

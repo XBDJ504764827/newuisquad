@@ -9,6 +9,8 @@ pub async fn get_config(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let s = team_switch_service::get_config(&state.pool, server_id)
         .await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    // 回填缓存
+    state.team_switch_cache.write().await.insert(server_id, s.enabled);
     Ok(Json(serde_json::json!(s)))
 }
 
@@ -19,5 +21,7 @@ pub async fn update_config(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let s = team_switch_service::update_config(&state.pool, server_id, req)
         .await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    // 更新缓存
+    state.team_switch_cache.write().await.insert(server_id, s.enabled);
     Ok(Json(serde_json::json!(s)))
 }

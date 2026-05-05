@@ -3,43 +3,16 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useServers } from '../../lib/useServers';
 import { api } from '../../lib/api';
+import { ServerInfoBar, factionFlag } from './ControlPanel/ServerInfoBar';
+import { LeftSidePanel } from './ControlPanel/LeftSidePanel';
+import { SquadBlock } from './ControlPanel/SquadBlock';
+import { Modal } from './ControlPanel/Modal';
 
 interface LogEntry { log_level: string; category: string | null; message: string; raw_line: string | null; logged_at: string; }
 interface ChatMsg { time: Date; player: string; message: string; channel: string; }
 interface BanEntry { player_name: string; steam_id: string; duration: string; reason: string; admin: string; }
 interface WarnEntry { player_name: string; steam_id: string; reason: string; admin: string; }
 interface ServerInfo { server_name: string; player_count: number; max_players: number; map_name: string; game_mode: string; next_map: string; next_layer: string; }
-
-const QUICK_COMMANDS = [
-    { label: '列出玩家', cmd: 'ListPlayers', icon: '👥' },
-    { label: '列出小队', cmd: 'ListSquads', icon: '🛡️' },
-    { label: '下张地图', cmd: 'ShowNextMap', icon: '🗺️' },
-    { label: '服务器信息', cmd: 'ShowServerInfo', icon: '📊' },
-    { label: '结束对局', cmd: 'AdminEndMatch', icon: '🏁' },
-    { label: '换图确认', cmd: 'AdminSlomo 1', icon: '⏱️' },
-];
-
-const CHANNEL_COLORS: Record<string, string> = {
-    All: '#a78bfa', Team: '#3b82f6', Squad: '#22c55e', Admin: '#f59e0b',
-};
-
-const LOG_LEVEL_COLORS: Record<string, string> = {
-    ERROR: '#ef4444', WARN: '#f59e0b', INFO: '#3b82f6', SUCCESS: '#22c55e', DEBUG: '#71717a',
-};
-
-function factionFlag(f: string) {
-    if (/pla|people.*liberation/i.test(f)) return '🇨🇳';
-    if (/us\s*army|united\s*states/i.test(f)) return '🇺🇸';
-    if (/british|baf/i.test(f)) return '🇬🇧';
-    if (/canadian/i.test(f)) return '🇨🇦';
-    if (/australian/i.test(f)) return '🇦🇺';
-    if (/russian|rgf|vdv/i.test(f)) return '🇷🇺';
-    if (/insurgent|irregular/i.test(f)) return '🏴';
-    if (/turkish/i.test(f)) return '🇹🇷';
-    if (/middle\s*eastern|mea/i.test(f)) return '🇸🇦';
-    if (/marine/i.test(f)) return '🌎';
-    return '🎖️';
-}
 
 export default function ControlPanelPage() {
     const { servers } = useServers();
@@ -52,6 +25,8 @@ export default function ControlPanelPage() {
     const [rconResult, setRconResult] = useState('');
     const [loading, setLoading] = useState(true);
     const wsRef = useRef<WebSocket | null>(null);
+    const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const reconnectAttemptRef = useRef(0);
     const logsEndRef = useRef<HTMLDivElement>(null);
     const chatEndRef = useRef<HTMLDivElement>(null);
     const notifId = useRef(0);
@@ -86,39 +61,89 @@ export default function ControlPanelPage() {
 
     useEffect(() => {
         if (!selectedServer) return;
-        if (wsRef.current) wsRef.current.close();
-        const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const token = localStorage.getItem('token') || '';
-        const ws = new WebSocket(`${proto}//${window.location.host}/api/v1/servers/${selectedServer.id}/logs/stream?token=${encodeURIComponent(token)}`);
-        ws.onmessage = (e) => {
-            try {
-                const entry = JSON.parse(e.data);
-                if (!entry.message || !entry.log_level) return;
-                setLogs(prev => [...prev.slice(-300), entry]);
-                const cat = entry.category || '';
-                if (cat.startsWith('Chat-')) {
-                    const channel = cat.replace('Chat-', '');
-                    const colon = entry.message.indexOf(': ');
-                    const player = colon > 0 ? entry.message.slice(0, colon) : '';
-                    const msg = colon > 0 ? entry.message.slice(colon + 2) : entry.message;
-                    setChatMsgs(prev => [...prev.slice(-200), { time: new Date(entry.logged_at), player, message: msg, channel }]);
-                }
-                if (cat === 'PlayerJoin') {
-                    const id = ++notifId.current;
-                    setNotifications(prev => [...prev.slice(-5), { id, text: entry.message, type: 'join' }]);
-                    setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== id)), 5000);
-                }
-                if (cat === 'PlayerLeave') {
-                    const id = ++notifId.current;
-                    setNotifications(prev => [...prev.slice(-5), { id, text: entry.message, type: 'leave' }]);
-                    setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== id)), 5000);
-                }
-            } catch { }
-        };
-        wsRef.current = ws;
+
+        // 清除之前的重连定时器
+        if (reconnectTimerRef.current) {
+            clearTimeout(reconnectTimerRef.current);
+            reconnectTimerRef.current = null;
+        }
+        // 关闭旧连接
+        if (wsRef.current) {
+            wsRef.current.onclose = null;
+            wsRef.current.onerror = null;
+            wsRef.current.close();
+        }
+
+        let cancelled = false;
+        reconnectAttemptRef.current = 0;
+
+        function connect() {
+            if (cancelled) return;
+            const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const token = localStorage.getItem('token') || '';
+            const ws = new WebSocket(`${proto}//${window.location.host}/api/v1/servers/${selectedServer.id}/logs/stream?token=${encodeURIComponent(token)}`);
+
+            ws.onopen = () => {
+                reconnectAttemptRef.current = 0;
+            };
+
+            ws.onmessage = (e) => {
+                try {
+                    const entry = JSON.parse(e.data);
+                    if (!entry.message || !entry.log_level) return;
+                    setLogs(prev => [...prev.slice(-300), entry]);
+                    const cat = entry.category || '';
+                    if (cat.startsWith('Chat-')) {
+                        const channel = cat.replace('Chat-', '');
+                        const colon = entry.message.indexOf(': ');
+                        const player = colon > 0 ? entry.message.slice(0, colon) : '';
+                        const msg = colon > 0 ? entry.message.slice(colon + 2) : entry.message;
+                        setChatMsgs(prev => [...prev.slice(-200), { time: new Date(entry.logged_at), player, message: msg, channel }]);
+                    }
+                    if (cat === 'PlayerJoin') {
+                        const id = ++notifId.current;
+                        setNotifications(prev => [...prev.slice(-5), { id, text: entry.message, type: 'join' }]);
+                        setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== id)), 5000);
+                    }
+                    if (cat === 'PlayerLeave') {
+                        const id = ++notifId.current;
+                        setNotifications(prev => [...prev.slice(-5), { id, text: entry.message, type: 'leave' }]);
+                        setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== id)), 5000);
+                    }
+                } catch { }
+            };
+
+            ws.onclose = () => {
+                if (cancelled) return;
+                const attempt = reconnectAttemptRef.current;
+                const delay = Math.min(1000 * Math.pow(2, attempt), 30000);
+                reconnectAttemptRef.current = attempt + 1;
+                reconnectTimerRef.current = setTimeout(connect, delay);
+            };
+
+            ws.onerror = () => {
+                ws.close();
+            };
+
+            wsRef.current = ws;
+        }
+
+        connect();
         setLogs([]);
         setChatMsgs([]);
-        return () => ws.close();
+
+        return () => {
+            cancelled = true;
+            if (reconnectTimerRef.current) {
+                clearTimeout(reconnectTimerRef.current);
+                reconnectTimerRef.current = null;
+            }
+            if (wsRef.current) {
+                wsRef.current.onclose = null;
+                wsRef.current.onerror = null;
+                wsRef.current.close();
+            }
+        };
     }, [selectedServer?.id]);
 
     useEffect(() => { logsEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [logs]);
@@ -231,48 +256,23 @@ export default function ControlPanelPage() {
         setDeleting(false);
     }, [deleteTarget, selectedServer]);
 
-    const playerPct = serverInfo ? Math.round((serverInfo.player_count / Math.max(1, serverInfo.max_players)) * 100) : 0;
-
     if (loading) return <div className="page-view"><div className="card"><div className="card-body" style={{ textAlign: 'center', color: 'var(--text3)', padding: 48 }}>加载中...</div></div></div>;
     if (servers.length === 0 && !showAddModal) return <div className="page-view"><div className="card"><div className="empty-state"><h3 style={{ fontSize: 18, marginBottom: 8 }}>暂无服务器</h3><p style={{ color: 'var(--text3)', marginBottom: 20 }}>添加游戏服务器以开始管理</p><button className="rcon-btn" style={{ width: 'auto', paddingLeft: 24, paddingRight: 24 }} onClick={() => { setShowAddModal(true); setNewToken(''); setError(''); }}>+ 添加服务器</button></div></div></div>;
 
     return (
         <div className="page-view" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             {/* ═══ 顶栏：服务器选择 + 信息条 ═══ */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-                <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                    {servers.map((s: any) => (
-                        <button
-                            key={s.id}
-                            onClick={() => setSelectedServer(s)}
-                            style={{
-                                padding: '6px 14px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 500,
-                                background: selectedServer?.id === s.id ? 'var(--text)' : 'var(--bg3)',
-                                color: selectedServer?.id === s.id ? 'var(--bg)' : 'var(--text2)',
-                                transition: 'all .15s',
-                            }}
-                        >{s.name}</button>
-                    ))}
-                    <button
-                        onClick={() => { setShowAddModal(true); setNewToken(''); setError(''); }}
-                        style={{ width: 28, height: 28, borderRadius: 6, border: '1px dashed var(--border2)', background: 'transparent', color: 'var(--text3)', cursor: 'pointer', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all .15s' }}
-                        title="添加服务器"
-                    >+</button>
-                </div>
-                <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-                    <label style={{ fontSize: 11, color: 'var(--text3)', display: 'flex', gap: 5, alignItems: 'center', cursor: 'pointer', userSelect: 'none' }}>
-                        <div style={{ width: 32, height: 18, borderRadius: 9, background: autoRefresh ? '#22c55e' : 'var(--border2)', position: 'relative', transition: 'background .2s' }}>
-                            <div style={{ position: 'absolute', top: 2, left: autoRefresh ? 16 : 2, width: 14, height: 14, borderRadius: '50%', background: '#fff', transition: 'left .2s', boxShadow: '0 1px 3px rgba(0,0,0,.3)' }} />
-                        </div>
-                        自动刷新
-                    </label>
-                    <button
-                        onClick={() => { fetchServerState(); fetchBansWarns(); }}
-                        style={{ width: 28, height: 28, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text2)', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all .15s' }}
-                        title="手动刷新"
-                    >🔄</button>
-                </div>
-            </div>
+            <ServerInfoBar
+                servers={servers}
+                selectedServer={selectedServer}
+                autoRefresh={autoRefresh}
+                serverInfo={serverInfo}
+                serverState={serverState}
+                onSelectServer={setSelectedServer}
+                onAddServer={() => { setShowAddModal(true); setNewToken(''); setError(''); }}
+                onToggleAutoRefresh={() => setAutoRefresh(!autoRefresh)}
+                onManualRefresh={() => { fetchServerState(); fetchBansWarns(); }}
+            />
 
             {/* ═══ 通知区域 ═══ */}
             {notifications.map(n => (
@@ -284,59 +284,6 @@ export default function ControlPanelPage() {
                 }}>{n.type === 'join' ? '✅' : '👋'} {n.text}</div>
             ))}
 
-            {/* ═══ 服务器状态卡片 ═══ */}
-            {serverInfo && (
-                <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
-                    <div style={{ padding: '14px 20px', display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'center' }}>
-                        {/* 服务器名 */}
-                        <div style={{ minWidth: 0, flex: '0 0 auto' }}>
-                            <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 260 }}>
-                                🖥️ {serverInfo.server_name || selectedServer?.name}
-                            </div>
-                        </div>
-
-                        <div style={{ width: 1, height: 24, background: 'var(--border)', flexShrink: 0 }} />
-
-                        {/* 玩家数 */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-                            <span style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap' }}>
-                                👥 {serverInfo.player_count}<span style={{ color: 'var(--text3)', fontWeight: 400 }}>/{serverInfo.max_players}</span>
-                            </span>
-                            <div style={{ width: 80, height: 6, borderRadius: 3, background: 'var(--bg3)', overflow: 'hidden' }}>
-                                <div style={{ height: '100%', borderRadius: 3, background: playerPct > 90 ? '#ef4444' : playerPct > 70 ? '#f59e0b' : '#22c55e', width: `${Math.min(100, playerPct)}%`, transition: 'width .5s ease' }} />
-                            </div>
-                        </div>
-
-                        <div style={{ width: 1, height: 24, background: 'var(--border)', flexShrink: 0 }} />
-
-                        {/* 地图信息 */}
-                        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center', flex: 1, minWidth: 0 }}>
-                            <span style={{ fontSize: 13, whiteSpace: 'nowrap' }}>
-                                🗺️ <strong>{serverInfo.map_name}</strong>
-                                <span style={{ color: 'var(--text3)', marginLeft: 6 }}>({serverInfo.game_mode})</span>
-                            </span>
-                            {serverInfo.next_map && (
-                                <span style={{ fontSize: 12, color: 'var(--text2)', whiteSpace: 'nowrap' }}>
-                                    → <span style={{ color: 'var(--text3)' }}>下一张:</span> {serverInfo.next_map}
-                                </span>
-                            )}
-                        </div>
-
-                        {/* 阵营旗帜 */}
-                        {serverState?.teams && serverState.teams.length >= 2 && (
-                            <>
-                                <div style={{ width: 1, height: 24, background: 'var(--border)', flexShrink: 0 }} />
-                                <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexShrink: 0, fontSize: 12 }}>
-                                    <span>{factionFlag(serverState.teams[0]?.faction || '')} {serverState.teams[0]?.faction || '—'}</span>
-                                    <span style={{ color: 'var(--text3)', fontWeight: 700 }}>VS</span>
-                                    <span>{factionFlag(serverState.teams[1]?.faction || '')} {serverState.teams[1]?.faction || '—'}</span>
-                                </div>
-                            </>
-                        )}
-                    </div>
-                </div>
-            )}
-
             {actionMsg && (
                 <div style={{ padding: '8px 14px', fontSize: 12, borderRadius: 6, background: actionMsg.includes('失败') ? 'rgba(239,68,68,0.08)' : 'rgba(34,197,94,0.08)', color: actionMsg.includes('失败') ? 'var(--red)' : '#22c55e', border: `1px solid ${actionMsg.includes('失败') ? 'rgba(239,68,68,0.15)' : 'rgba(34,197,94,0.15)'}`, fontWeight: 500 }}>
                     {actionMsg}
@@ -346,176 +293,33 @@ export default function ControlPanelPage() {
             {/* ═══ 主内容区 ═══ */}
             <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 16, alignItems: 'start' }}>
                 {/* ═══ 左侧面板 ═══ */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                    {/* 服务器信息卡片 */}
-                    {selectedServer && (
-                        <div className="card">
-                            <div className="card-header" style={{ padding: '10px 14px' }}>
-                                <div className="card-title" style={{ fontSize: 13 }}>📡 连接信息</div>
-                            </div>
-                            <div className="card-body" style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8, fontSize: 12 }}>
-                                <InfoRow label="服务器 ID" value={String(selectedServer.server_id)} />
-                                <InfoRow label="地址" value={`${selectedServer.ip}:${selectedServer.rcon_port}`} />
-                                <button
-                                    onClick={() => handleDeleteClick(selectedServer)}
-                                    style={{
-                                        width: '100%', marginTop: 4, padding: '7px 0', background: 'transparent',
-                                        border: '1px solid rgba(239,68,68,0.3)', borderRadius: 6,
-                                        color: 'var(--red)', cursor: 'pointer', fontSize: 11, fontWeight: 500,
-                                        transition: 'all .15s',
-                                    }}
-                                    onMouseEnter={e => { e.currentTarget.style.background = 'rgba(239,68,68,0.08)'; }}
-                                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
-                                >删除服务器</button>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* RCON 命令 */}
-                    {selectedServer && (
-                        <div className="card">
-                            <div className="card-header" style={{ padding: '10px 14px' }}>
-                                <div className="card-title" style={{ fontSize: 13 }}>⌨️ RCON 命令</div>
-                            </div>
-                            <div className="card-body" style={{ padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                                <div style={{ display: 'flex', gap: 6 }}>
-                                    <input
-                                        type="text"
-                                        className="rcon-input"
-                                        placeholder="输入 RCON 指令..."
-                                        value={rconCommand}
-                                        onChange={e => setRconCommand(e.target.value)}
-                                        onKeyDown={e => e.key === 'Enter' && sendRcon()}
-                                        style={{ flex: 1, fontSize: 12, padding: '8px 10px' }}
-                                    />
-                                    <button
-                                        className="rcon-btn"
-                                        onClick={() => sendRcon()}
-                                        style={{ width: 'auto', padding: '8px 14px', fontSize: 12 }}
-                                    >发送</button>
-                                </div>
-                                {rconResult && (
-                                    <div className="terminal" style={{ maxHeight: 140, overflowY: 'auto', fontSize: 11, padding: 10, whiteSpace: 'pre-wrap', wordBreak: 'break-all', borderRadius: 6 }}>
-                                        {rconResult}
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    )}
-
-                    {/* 快捷命令 */}
-                    {selectedServer && (
-                        <div className="card">
-                            <div className="card-header" style={{ padding: '10px 14px' }}>
-                                <div className="card-title" style={{ fontSize: 13 }}>⚡ 快捷命令</div>
-                            </div>
-                            <div className="card-body" style={{ padding: '8px 14px', display: 'flex', flexDirection: 'column', gap: 4 }}>
-                                {QUICK_COMMANDS.map(qc => (
-                                    <button
-                                        key={qc.cmd}
-                                        onClick={() => sendRcon(qc.cmd)}
-                                        style={{
-                                            width: '100%', padding: '7px 12px', border: '1px solid var(--border)',
-                                            borderRadius: 6, background: 'var(--bg3)', color: 'var(--text2)',
-                                            cursor: 'pointer', fontSize: 12, textAlign: 'left',
-                                            transition: 'all .12s', display: 'flex', gap: 8, alignItems: 'center',
-                                        }}
-                                        onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg4)'; e.currentTarget.style.color = 'var(--text)'; }}
-                                        onMouseLeave={e => { e.currentTarget.style.background = 'var(--bg3)'; e.currentTarget.style.color = 'var(--text2)'; }}
-                                    ><span style={{ fontSize: 14 }}>{qc.icon}</span> {qc.label}</button>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-
-                    {/* 暖服功能 */}
-                    {selectedServer && (
-                        <div className="card">
-                            <div className="card-header" style={{ padding: '10px 14px' }}>
-                                <div className="card-title" style={{ fontSize: 13 }}>🔥 暖服功能</div>
-                                <div className="card-sub">快速开关暖服作弊选项</div>
-                            </div>
-                            <div className="card-body" style={{ padding: '8px 14px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                                {[
-                                    { key: 'novehicleclaim', label: '取消载具认领权限', cmd: 'AdminDisableVehicleClaiming' },
-                                    { key: 'forcevehicle', label: '始终填满所有载具刷新位置', cmd: 'AdminForceAllVehicleAvailability' },
-                                    { key: 'forcedeploy', label: '取消部署要求限制', cmd: 'AdminForceAllDeployableAvailability' },
-                                    { key: 'forcerole', label: '取消装具人数限制', cmd: 'AdminForceAllRoleAvailability' },
-                                    { key: 'noenemylimit', label: '可以使用敌方载具', cmd: 'AdminDisableVehicleTeamRequirement' },
-                                    { key: 'nokitreq', label: '取消坦克飞机载具要求', cmd: 'AdminDisableVehicleKitRequirement' },
-                                    { key: 'norespawn', label: '取消复活时间', cmd: 'AdminNoRespawnTimer' },
-                                ].map(item => {
-                                    const state = warmupToggles[item.key]; // null=未知, true=开启, false=关闭
-                                    const setState = (v: boolean) => {
-                                        sendRcon(`${item.cmd} ${v ? 1 : 0}`);
-                                        const next = { ...warmupToggles, [item.key]: v };
-                                        setWarmupToggles(next);
-                                        try { localStorage.setItem('warmupToggles', JSON.stringify(next)); } catch {}
-                                    };
-                                    return (
-                                        <div key={item.key} style={{
-                                            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                                            padding: '6px 10px', borderRadius: 6,
-                                            background: state === true ? 'rgba(34,197,94,0.06)' : state === false ? 'rgba(239,68,68,0.04)' : 'var(--bg3)',
-                                            border: `1px solid ${state === true ? 'rgba(34,197,94,0.2)' : state === false ? 'rgba(239,68,68,0.15)' : 'var(--border)'}`,
-                                            transition: 'all .15s',
-                                        }}>
-                                            <span style={{ fontSize: 12, fontWeight: 500, color: state === true ? '#22c55e' : state === false ? 'var(--red)' : 'var(--text2)' }}>{item.label}</span>
-                                            <div style={{ display: 'flex', gap: 4, flexShrink: 0, marginLeft: 8 }}>
-                                                <button
-                                                    onClick={() => setState(true)}
-                                                    style={{
-                                                        padding: '2px 10px', borderRadius: 4, border: 'none',
-                                                        cursor: 'pointer', fontSize: 10, fontWeight: 700,
-                                                        background: state === true ? '#22c55e' : 'rgba(34,197,94,0.12)',
-                                                        color: state === true ? '#fff' : 'rgba(34,197,94,0.6)',
-                                                        transition: 'all .1s',
-                                                    }}
-                                                >开启</button>
-                                                <button
-                                                    onClick={() => setState(false)}
-                                                    style={{
-                                                        padding: '2px 10px', borderRadius: 4, border: 'none',
-                                                        cursor: 'pointer', fontSize: 10, fontWeight: 700,
-                                                        background: state === false ? 'var(--red)' : 'rgba(239,68,68,0.12)',
-                                                        color: state === false ? '#fff' : 'rgba(239,68,68,0.5)',
-                                                        transition: 'all .1s',
-                                                    }}
-                                                >关闭</button>
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        </div>
-                    )}
-
-                    {/* 广播 */}
-                    {selectedServer && (
-                        <div className="card">
-                            <div className="card-header" style={{ padding: '10px 14px' }}>
-                                <div className="card-title" style={{ fontSize: 13 }}>📢 游戏广播</div>
-                            </div>
-                            <div className="card-body" style={{ padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                                <input
-                                    type="text"
-                                    className="rcon-input"
-                                    placeholder="输入广播内容..."
-                                    value={broadcastMsg}
-                                    onChange={e => setBroadcastMsg(e.target.value)}
-                                    onKeyDown={e => e.key === 'Enter' && sendBroadcast()}
-                                    style={{ fontSize: 12, padding: '8px 10px' }}
-                                />
-                                <button
-                                    className="rcon-btn"
-                                    onClick={sendBroadcast}
-                                    disabled={!broadcastMsg}
-                                    style={{ fontSize: 12, padding: '8px 14px', opacity: broadcastMsg ? 1 : 0.4 }}
-                                >发送广播</button>
-                            </div>
-                        </div>
-                    )}
-                </div>
+                <LeftSidePanel
+                    selectedServer={selectedServer}
+                    rconCommand={rconCommand}
+                    rconResult={rconResult}
+                    broadcastMsg={broadcastMsg}
+                    warmupToggles={warmupToggles}
+                    onRconCommandChange={setRconCommand}
+                    onSendRcon={sendRcon}
+                    onDeleteServer={handleDeleteClick}
+                    onBroadcastMsgChange={setBroadcastMsg}
+                    onSendBroadcast={sendBroadcast}
+                    onWarmupToggle={(key: string, v: boolean) => {
+                        const item = [
+                            { key: 'novehicleclaim', cmd: 'AdminDisableVehicleClaiming' },
+                            { key: 'forcevehicle', cmd: 'AdminForceAllVehicleAvailability' },
+                            { key: 'forcedeploy', cmd: 'AdminForceAllDeployableAvailability' },
+                            { key: 'forcerole', cmd: 'AdminForceAllRoleAvailability' },
+                            { key: 'noenemylimit', cmd: 'AdminDisableVehicleTeamRequirement' },
+                            { key: 'nokitreq', cmd: 'AdminDisableVehicleKitRequirement' },
+                            { key: 'norespawn', cmd: 'AdminNoRespawnTimer' },
+                        ].find(it => it.key === key);
+                        if (item) sendRcon(`${item.cmd} ${v ? 1 : 0}`);
+                        const next = { ...warmupToggles, [key]: v };
+                        setWarmupToggles(next);
+                        try { localStorage.setItem('warmupToggles', JSON.stringify(next)); } catch {}
+                    }}
+                />
 
                 {/* ═══ 右侧面板 ═══ */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -680,122 +484,3 @@ export default function ControlPanelPage() {
     );
 }
 
-/* ═══ 子组件 ═══ */
-
-function InfoRow({ label, value }: { label: string; value: string }) {
-    return (
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border)', paddingBottom: 6 }}>
-            <span style={{ color: 'var(--text3)', fontSize: 11 }}>{label}</span>
-            <span style={{ fontWeight: 600, fontSize: 12 }}>{value}</span>
-        </div>
-    );
-}
-
-function SquadBlock({ squad, members, onAction, onDisband, adminSteamIds, collapsed: forceCollapsed }: {
-    squad: any; members: any[]; onAction: (name: string, action: string, msg?: string) => void;
-    onDisband: (() => void) | null; adminSteamIds?: string[]; collapsed?: boolean;
-}) {
-    const [collapsed, setCollapsed] = useState(forceCollapsed ?? (members.length > 8));
-    const leader = members.find((m: any) => m.is_leader);
-
-    return (
-        <div style={{ borderBottom: '1px solid var(--border)' }}>
-            <div
-                onClick={() => setCollapsed(!collapsed)}
-                style={{
-                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                    padding: '8px 14px', background: 'var(--bg3)', cursor: 'pointer',
-                    userSelect: 'none', transition: 'background .1s',
-                    fontSize: 12,
-                }}
-                onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg4)'; }}
-                onMouseLeave={e => { e.currentTarget.style.background = 'var(--bg3)'; }}
-            >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ fontSize: 10, color: 'var(--text3)', transition: 'transform .15s', transform: collapsed ? 'rotate(-90deg)' : 'rotate(0)' }}>▼</span>
-                    <strong>{squad.name}</strong>
-                    {leader && <span style={{ fontSize: 10, color: '#f59e0b' }}>👑 {leader.name}</span>}
-                </div>
-                <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-                    <span style={{ fontSize: 10, color: 'var(--text3)' }}>{squad.creator || ''}</span>
-                    <span style={{ fontSize: 10, color: 'var(--text3)', background: 'var(--bg2)', padding: '1px 7px', borderRadius: 10 }}>{members.length}</span>
-                    {onDisband && (
-                        <span
-                            onClick={e => { e.stopPropagation(); onDisband(); }}
-                            style={{ fontSize: 10, cursor: 'pointer', color: 'var(--red)', padding: '2px 6px', borderRadius: 4, background: 'rgba(239,68,68,0.08)' }}
-                            title="解散小队"
-                        >解散</span>
-                    )}
-                </div>
-            </div>
-            {!collapsed && members.length > 0 && (
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
-                    <thead>
-                        <tr style={{ background: 'var(--bg2)' }}>
-                            <th style={{ padding: '5px 14px', color: 'var(--text3)', fontWeight: 500, textAlign: 'left', fontSize: 10 }}>玩家</th>
-                            <th style={{ padding: '5px 6px', color: 'var(--text3)', fontWeight: 500, textAlign: 'left', fontSize: 10 }}>职业</th>
-                            <th style={{ padding: '5px 14px', color: 'var(--text3)', fontWeight: 500, textAlign: 'right', fontSize: 10 }}>操作</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {members.map((p: any) => (
-                            <tr key={p.name + (p.steam_id || '')} style={{ borderBottom: '1px solid var(--border)', transition: 'background .1s' }}
-                                onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg3)'; }}
-                                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
-                            >
-                                <td style={{ padding: '5px 14px' }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                                        <span style={{ fontWeight: 600, fontSize: 12 }}>{p.name}</span>
-                                        {(p.is_admin || (adminSteamIds && p.steam_id && adminSteamIds.includes(p.steam_id))) && <span style={{ color: '#f59e0b', fontSize: 9, background: 'rgba(245,158,11,0.15)', padding: '1px 5px', borderRadius: 3, fontWeight: 700, letterSpacing: '0.02em' }}>OP</span>}
-                                        {p.is_leader && <span style={{ color: '#f59e0b', fontSize: 9 }}>👑</span>}
-                                    </div>
-                                </td>
-                                <td style={{ padding: '5px 6px', color: 'var(--text2)', fontSize: 10 }}>{p.role}</td>
-                                <td style={{ padding: '5px 14px', textAlign: 'right' }}>
-                                    <div style={{ display: 'flex', gap: 3, justifyContent: 'flex-end' }}>
-                                        <ActionBtn color="var(--text2)" bg="var(--bg4)" onClick={() => onAction(p.name, 'warn')}>警告</ActionBtn>
-                                        <ActionBtn color="var(--red)" bg="rgba(239,68,68,0.08)" onClick={() => { if (confirm(`踢出 ${p.name}?`)) onAction(p.name, 'kick', '管理员操作'); }}>踢出</ActionBtn>
-                                        <ActionBtn color="var(--red)" bg="rgba(239,68,68,0.12)" onClick={() => { if (confirm(`封禁 ${p.name}?`)) onAction(p.name, 'ban', '管理员操作'); }}>封禁</ActionBtn>
-                                        <ActionBtn color="var(--blue)" bg="rgba(59,130,246,0.08)" onClick={() => { if (confirm(`强制 ${p.name} 跳边?`)) onAction(p.name, 'team_change'); }}>跳边</ActionBtn>
-                                    </div>
-                                </td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-            )}
-        </div>
-    );
-}
-
-function ActionBtn({ children, onClick, color, bg }: { children: string; onClick: () => void; color: string; bg: string }) {
-    const [hover, setHover] = useState(false);
-    return (
-        <span
-            onClick={onClick}
-            onMouseEnter={() => setHover(true)}
-            onMouseLeave={() => setHover(false)}
-            style={{
-                cursor: 'pointer', fontSize: 9, fontWeight: 600,
-                padding: '3px 7px', borderRadius: 4,
-                background: hover ? color : bg,
-                color: hover ? '#fff' : color,
-                transition: 'all .12s', whiteSpace: 'nowrap',
-                border: `1px solid ${hover ? color : 'transparent'}`,
-            }}
-        >{children}</span>
-    );
-}
-
-function Modal({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
-    return (
-        <div
-            style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, backdropFilter: 'blur(4px)' }}
-            onClick={e => { if (e.target === e.currentTarget) onClose(); }}
-        >
-            <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 12, padding: 24, width: 460, maxWidth: '90vw', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }} onClick={e => e.stopPropagation()}>
-                {children}
-            </div>
-        </div>
-    );
-}

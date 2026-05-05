@@ -48,13 +48,16 @@ impl AgentPool {
         let (resp_tx, resp_rx) = oneshot::channel();
         tx.send(cmd).map_err(|e| format!("发送失败: {}", e))?;
         // 仅在发送成功后注册等待
-        self.pending.write().await.insert(request_id.to_string(), resp_tx);
+        let pending_key = format!("{}:{}", server_id, request_id);
+        self.pending.write().await.insert(pending_key.clone(), resp_tx);
         match tokio::time::timeout(std::time::Duration::from_secs(10), resp_rx).await {
-            Ok(Ok(msg)) => Ok(msg),
+            Ok(Ok(msg)) => {
+                self.pending.write().await.remove(&pending_key);
+                Ok(msg)
+            }
             Ok(Err(_)) => Err("Agent 断开".to_string()),
             Err(_) => {
-                // 超时后清理 pending 条目，防止内存泄漏
-                self.pending.write().await.remove(request_id);
+                self.pending.write().await.remove(&pending_key);
                 Err("响应超时".to_string())
             }
         }
@@ -93,10 +96,12 @@ pub async fn handler(
         .await;
 
     let server_states = state.server_states.clone();
+    let team_switch_cache = state.team_switch_cache.clone();
+    let log_batcher = state.log_batcher.clone();
     match result {
         Ok(Some(row)) => {
             let server_id: i32 = row.get(0);
-            ws.on_upgrade(move |socket| handle_socket(socket, pool, agent_pool, server_states, server_id.to_string()))
+            ws.on_upgrade(move |socket| handle_socket(socket, pool, agent_pool, server_states, team_switch_cache, log_batcher, server_id.to_string()))
         }
         _ => {
             ws.on_upgrade(|mut socket| async move {
@@ -111,7 +116,9 @@ async fn handle_socket(
     socket: WebSocket,
     db_pool: sqlx::PgPool,
     agent_pool: AgentPool,
-    server_states: Arc<std::sync::RwLock<std::collections::HashMap<String, serde_json::Value>>>,
+    server_states: Arc<tokio::sync::RwLock<std::collections::HashMap<String, serde_json::Value>>>,
+    team_switch_cache: Arc<tokio::sync::RwLock<std::collections::HashMap<i32, bool>>>,
+    log_batcher: crate::services::log_batcher::LogBatcher,
     server_id: String,
 ) {
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<AgentMessage>();
@@ -152,10 +159,7 @@ async fn handle_socket(
                                 Ok(n) => tracing::debug!(server_id = sid, receivers = n, "日志已广播"),
                                 Err(e) => tracing::error!(server_id = sid, error = %e, "日志广播失败"),
                             }
-                            let _ = crate::repositories::server_log_repo::insert_log_entry(
-                                &pool, sid, &entry,
-                            )
-                            .await;
+                            log_batcher.send(sid, entry.clone());
 
                             // Squad 日志解析：提取结构化事件
                             use crate::services::squad_log_parser::{parse_line, ParsedEvent};
@@ -237,22 +241,33 @@ async fn handle_socket(
                             if let Some(category) = &data.category {
                                 let is_public_chat = category == "Chat-All" || category == "Chat" || category == "ChatTeam" || category == "ChatSquad";
                                 if is_public_chat {
-                                    // 检查功能开关
-                                    let ts_enabled = sqlx::query_scalar::<_, bool>(
-                                        "SELECT enabled FROM team_switch_config WHERE server_id = $1"
-                                    )
-                                    .bind(sid)
-                                    .fetch_optional(&pool)
-                                    .await
-                                    .ok()
-                                    .flatten()
-                                    .unwrap_or(false);
+                                    // 检查功能开关（优先从缓存读取）
+                                    let ts_enabled = {
+                                        let cache = team_switch_cache.read().await;
+                                        match cache.get(&sid) {
+                                            Some(&enabled) => enabled,
+                                            None => {
+                                                drop(cache);
+                                                let enabled = sqlx::query_scalar::<_, bool>(
+                                                    "SELECT enabled FROM team_switch_config WHERE server_id = $1"
+                                                )
+                                                .bind(sid)
+                                                .fetch_optional(&pool)
+                                                .await
+                                                .ok()
+                                                .flatten()
+                                                .unwrap_or(false);
+                                                team_switch_cache.write().await.insert(sid, enabled);
+                                                enabled
+                                            }
+                                        }
+                                    };
 
                                     if ts_enabled {
                                         let parsed = data.message.split_once(": ");
                                         if let Some((chat_player, chat_msg)) = parsed {
-                                            let cache = server_states.read().ok();
-                                            let state = cache.as_ref().and_then(|c| c.get(&sid.to_string()));
+                                            let cache = server_states.read().await;
+                                            let state = cache.get(&sid.to_string());
                                             tracing::info!(server_id = %sid, player = %chat_player, msg = %chat_msg, has_state = state.is_some(), raw_msg = %data.message, "代码跳边: 解析聊天");
                                             let commands = ts_manager.process_chat(
                                                 &sid.to_string(),
@@ -260,7 +275,6 @@ async fn handle_socket(
                                                 chat_msg,
                                                 state,
                                             );
-                                            drop(cache);
                                             if commands.is_empty() {
                                                 tracing::warn!(server_id = %sid, player = %chat_player, "代码跳边: 未生成任何命令");
                                             }
@@ -278,8 +292,8 @@ async fn handle_socket(
                         AgentMessage::FileReadResult { request_id, .. }
                         | AgentMessage::FileWriteResult { request_id, .. }
                         | AgentMessage::FileListResult { request_id, .. } => {
-                            let rid = request_id.clone();
-                            if let Some(tx) = pending.write().await.remove(&rid) {
+                            let key = format!("{}:{}", sid, request_id);
+                            if let Some(tx) = pending.write().await.remove(&key) {
                                 let _ = tx.send(agent_msg.clone());
                             }
                         }
@@ -335,12 +349,9 @@ async fn handle_socket(
                                 "server_name": server_name, "player_count": player_count,
                                 "max_players": max_players, "next_map": next_map,
                             });
-                            if let Ok(mut cache) = server_states.write() {
-                                cache.insert(sid.to_string(), state);
-                                tracing::debug!(server_id = %sid, "服务器状态已缓存");
-                            } else {
-                                tracing::error!(server_id = %sid, "服务器状态缓存写入失败（锁污染）");
-                            }
+                            let mut cache = server_states.write().await;
+                            cache.insert(sid.to_string(), state);
+                            tracing::debug!(server_id = %sid, "服务器状态已缓存");
                         }
                         _ => {}
                     }
@@ -374,8 +385,11 @@ async fn handle_socket(
     }
 
     agent_pool.agents.write().await.remove(&server_id);
-    // 清理该 Agent 相关的所有待处理请求
-    agent_pool.pending.write().await.clear();
+    // 仅清理该 Agent 相关的待处理请求
+    {
+        let prefix = format!("{}:", server_id);
+        agent_pool.pending.write().await.retain(|k, _| !k.starts_with(&prefix));
+    }
     tracing::info!("Agent 已断开: {}", server_id);
     crate::services::system_log::agent_event(&db_pool, "agent_ws", &format!("Agent 已断开 server_id={}", server_id)).await;
 }

@@ -56,7 +56,7 @@ pub async fn handler(
     let tid = server_id.to_string();
 
     // 更新缓存：添加 squadjs_squads（含队长信息）和 squadjs_map_name
-    if let Ok(mut cache) = state.server_states.write() {
+    let mut cache = state.server_states.write().await;
         let entry = cache.entry(tid).or_insert(serde_json::json!({}));
 
         if let Some(obj) = entry.as_object_mut() {
@@ -81,7 +81,6 @@ pub async fn handler(
                 obj.insert("map_name".into(), serde_json::json!(report.map_name));
             }
         }
-    }
 
     tracing::info!(server_id, squads = report.squads.len(), map = %report.map_name, "SquadJS 数据上报");
 

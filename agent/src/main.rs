@@ -33,11 +33,11 @@ async fn main() -> anyhow::Result<()> {
     let config = config::Config::from_env();
     tracing::info!("Agent 启动, token: {}...", &config.token[..16.min(config.token.len())]);
 
-    // Channel A: log_watcher/file_ops → ws_client → WebSocket → 后端
-    let (to_ws_tx, to_ws_rx) = mpsc::unbounded_channel::<protocol::AgentMessage>();
+    // Channel A: log_watcher/file_ops → ws_client → WebSocket → 后端 (有界通道，背压保护)
+    let (to_ws_tx, to_ws_rx) = mpsc::channel::<protocol::AgentMessage>(256);
 
-    // Channel B: WebSocket(后端消息) → ws_client → file_ops
-    let (to_agent_tx, to_agent_rx) = mpsc::unbounded_channel::<protocol::AgentMessage>();
+    // Channel B: WebSocket(后端消息) → ws_client → file_ops (有界通道)
+    let (to_agent_tx, to_agent_rx) = mpsc::channel::<protocol::AgentMessage>(64);
 
     // WebSocket 客户端（token 通过 URL query param 传递，兼容 tungstenite 自定义请求限制）
     let ws_tx = to_agent_tx.clone();
@@ -47,8 +47,8 @@ async fn main() -> anyhow::Result<()> {
         ws_client::run(ws_url, ws_tx, ws_rx).await;
     });
 
-    // Channel C: 后端 RCON 命令 → rcon_listener
-    let (rcon_cmd_tx, rcon_cmd_rx) = mpsc::unbounded_channel::<String>();
+    // Channel C: 后端 RCON 命令 → rcon_listener (有界通道)
+    let (rcon_cmd_tx, rcon_cmd_rx) = mpsc::channel::<String>(32);
 
     // RCON 长连接 → Channel A（事件监听 + 状态查询 + 自动广播 + 欢迎消息）
     if !config.rcon_password.is_empty() {
@@ -82,7 +82,7 @@ async fn main() -> anyhow::Result<()> {
         while let Some(cmd) = rx.recv().await {
             match cmd {
                 protocol::AgentMessage::SendRcon { command } => {
-                    let _ = rcon_cmd_tx.send(command);
+                    let _ = rcon_cmd_tx.send(command).await;
                 }
                 other => file_ops::handle_command(other, &cmd_tx, &config_dir).await,
             }

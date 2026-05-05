@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use tokio::sync::mpsc;
 use crate::protocol::{AgentMessage, LogEntry};
 
-pub fn start_watching(file_path: PathBuf, msg_tx: mpsc::UnboundedSender<AgentMessage>) {
+pub fn start_watching(file_path: PathBuf, msg_tx: mpsc::Sender<AgentMessage>) {
     let path_display = file_path.display().to_string();
     eprintln!("[LogWatcher] 启动监听: {}", path_display);
     std::thread::spawn(move || {
@@ -55,7 +55,7 @@ pub fn start_watching(file_path: PathBuf, msg_tx: mpsc::UnboundedSender<AgentMes
                                             continue;
                                         }
                                         let entry = parse_log_line(line);
-                                        if msg_tx.send(AgentMessage::Log { data: entry }).is_err() {
+                                        if msg_tx.blocking_send(AgentMessage::Log { data: entry }).is_err() {
                                                             tracing::error!("日志行发送失败（通道已关闭）");
                                                             return;
                                                         }

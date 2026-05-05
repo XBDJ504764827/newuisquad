@@ -1,37 +1,32 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import dynamic from 'next/dynamic';
 import Sidebar from './components/Sidebar';
 import Topbar from './components/Topbar';
 import LoginPage from './components/LoginPage';
-import SummaryPage from './components/pages/SummaryPage';
-import ControlPanelPage from './components/pages/ControlPanelPage';
-import ChatLogsPage from './components/pages/ChatLogsPage';
-import FlyLogsPage from './components/pages/FlyLogsPage';
-import KillLogsPage from './components/pages/KillLogsPage';
-import MatchLogsPage from './components/pages/MatchLogsPage';
-import ConfigFilePage from './components/pages/ConfigFilePage';
-import ConfigPanelPage from './components/pages/ConfigPanelPage';
-import ActionLogsPage from './components/pages/ActionLogsPage';
-import PlayerInfoPage from './components/pages/PlayerInfoPage';
-import AdminUsersPage from './components/pages/AdminUsersPage';
-import PermissionSettingsPage from './components/pages/PermissionSettingsPage';
 import { PageId } from './types';
 
 const pageComponents: Record<PageId, React.ComponentType> = {
-  'summary': SummaryPage,
-  'control-panel': ControlPanelPage,
-  'chat-logs': ChatLogsPage,
-  'fly-logs': FlyLogsPage,
-  'kill-logs': KillLogsPage,
-  'match-logs': MatchLogsPage,
-  'config-file': ConfigFilePage,
-  'config-panel': ConfigPanelPage,
-  'action-logs': ActionLogsPage,
-  'player-info': PlayerInfoPage,
-  'admin-users': AdminUsersPage,
-  'permission-settings': PermissionSettingsPage,
+  'summary': dynamic(() => import('./components/pages/SummaryPage'), { loading: () => <LoadingPlaceholder /> }),
+  'control-panel': dynamic(() => import('./components/pages/ControlPanelPage'), { loading: () => <LoadingPlaceholder /> }),
+  'chat-logs': dynamic(() => import('./components/pages/ChatLogsPage'), { loading: () => <LoadingPlaceholder /> }),
+  'fly-logs': dynamic(() => import('./components/pages/FlyLogsPage'), { loading: () => <LoadingPlaceholder /> }),
+  'kill-logs': dynamic(() => import('./components/pages/KillLogsPage'), { loading: () => <LoadingPlaceholder /> }),
+  'match-logs': dynamic(() => import('./components/pages/MatchLogsPage'), { loading: () => <LoadingPlaceholder /> }),
+  'config-file': dynamic(() => import('./components/pages/ConfigFilePage'), { loading: () => <LoadingPlaceholder /> }),
+  'config-panel': dynamic(() => import('./components/pages/ConfigPanelPage'), { loading: () => <LoadingPlaceholder /> }),
+  'action-logs': dynamic(() => import('./components/pages/ActionLogsPage'), { loading: () => <LoadingPlaceholder /> }),
+  'player-info': dynamic(() => import('./components/pages/PlayerInfoPage'), { loading: () => <LoadingPlaceholder /> }),
+  'admin-users': dynamic(() => import('./components/pages/AdminUsersPage'), { loading: () => <LoadingPlaceholder /> }),
+  'permission-settings': dynamic(() => import('./components/pages/PermissionSettingsPage'), { loading: () => <LoadingPlaceholder /> }),
 };
+
+function LoadingPlaceholder() {
+  return <div className="page-view" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '60vh' }}>
+    <div style={{ color: 'var(--text3)', fontSize: 14 }}>加载中...</div>
+  </div>;
+}
 
 const breadcrumbMap: Record<PageId, { cat: string; page: string }> = {
   'summary': { cat: '主页', page: '概要' },

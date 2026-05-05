@@ -49,7 +49,7 @@ pub async fn get_server_info(
     Path(server_id): Path<i32>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     // 优先从 Agent 缓存读取
-    if let Ok(cache) = state.server_states.read() {
+    let cache = state.server_states.read().await;
         if let Some(cached) = cache.get(&server_id.to_string()) {
             let map = cached["map_name"].as_str().unwrap_or("");
             let map_name = if map.is_empty() || map == "Unknown" || map.contains("not defined") {
@@ -75,7 +75,6 @@ pub async fn get_server_info(
                 })));
             }
         }
-    }
 
     // 回退到直接 RCON
     let row = sqlx::query_as::<_, (String, i32, String)>(
@@ -95,7 +94,7 @@ pub async fn get_server_state(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     // 优先从缓存读取（修复无效地图名）
     let cached = {
-        let cache = state.server_states.read().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let cache = state.server_states.read().await;
         let hit = cache.get(&server_id.to_string()).cloned();
         tracing::info!(server_id, cache_hit = hit.is_some(), "查询服务器状态缓存");
         hit

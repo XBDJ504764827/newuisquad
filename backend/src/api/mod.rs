@@ -30,6 +30,7 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 use crate::models::server_log::LogEntry;
 use crate::api::agent_ws::AgentPool;
+use crate::services::log_batcher::LogBatcher;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -39,7 +40,11 @@ pub struct AppState {
     pub steam_api_key: String,
     pub jwt_secret: String,
     // Agent 上报的服务器状态缓存 { server_id -> state_json }
-    pub server_states: Arc<std::sync::RwLock<std::collections::HashMap<String, serde_json::Value>>>,
+    pub server_states: Arc<tokio::sync::RwLock<std::collections::HashMap<String, serde_json::Value>>>,
+    // 代码跳边开关缓存: server_id -> enabled
+    pub team_switch_cache: Arc<tokio::sync::RwLock<std::collections::HashMap<i32, bool>>>,
+    // 批量日志写入器
+    pub log_batcher: LogBatcher,
 }
 
 pub fn build_router(state: AppState) -> Router {

@@ -7,8 +7,8 @@ use crate::protocol::{AgentMessage, LogEntry, PlayerInfo, SquadInfo, TeamName};
 
 pub fn start_rcon_listener(
     host: String, port: u16, password: String,
-    msg_tx: mpsc::UnboundedSender<AgentMessage>,
-    mut rcon_cmd_rx: mpsc::UnboundedReceiver<String>,
+    msg_tx: mpsc::Sender<AgentMessage>,
+    mut rcon_cmd_rx: mpsc::Receiver<String>,
     auto_broadcast_secs: u64, auto_broadcast_msg: String, welcome_msg: String,
     admins_cfg_path: String,
 ) {
@@ -99,7 +99,7 @@ pub fn start_rcon_listener(
                         let actual_player_count = player_count.max(players.len() as i32);
                         eprintln!("[RCON] 上报: {}人/{}队 阵营{:?} 地图{}", players.len(), squads.len(), team_names.iter().map(|t|&t.faction).collect::<Vec<_>>(), map_name);
                         if !players.is_empty() {
-                            let _ = msg_tx.send(AgentMessage::ServerStateReport {
+                            let _ = msg_tx.blocking_send(AgentMessage::ServerStateReport {
                                 players, squads, team_names,
                                 map_name, game_mode,
                                 server_name, player_count: actual_player_count, max_players,
@@ -181,7 +181,7 @@ pub fn start_rcon_listener(
                             // ===== 聊天 =====
                             if let Some(ev) = chat_event(&body) {
                                 eprintln!("[RCON] 聊天解析: player={:?} msg={:?} raw={:?}", ev.player, ev.msg, &body[..body.len().min(200)]);
-                                let _ = msg_tx.send(AgentMessage::Log { data: LogEntry {
+                                let _ = msg_tx.blocking_send(AgentMessage::Log { data: LogEntry {
                                     log_level: "INFO".into(), category: Some(format!("Chat-{}", ev.channel)),
                                     message: format!("{}: {}", ev.player, ev.msg),
                                     raw_line: Some(body), logged_at: chrono::Utc::now(),
@@ -195,7 +195,7 @@ pub fn start_rcon_listener(
                                     let name = body.split(':').last().map(|s| s.trim()).unwrap_or("");
                                     let _ = s.write_all(&build(2, 0, &format!("AdminBroadcast \"{}\"", welcome_msg.replace("{player}", name))));
                                 }
-                                let _ = msg_tx.send(AgentMessage::Log { data: LogEntry {
+                                let _ = msg_tx.blocking_send(AgentMessage::Log { data: LogEntry {
                                     log_level: "INFO".into(), category: Some("PlayerJoin".into()),
                                     message: body.clone(), raw_line: Some(body), logged_at: chrono::Utc::now(),
                                 }});
@@ -204,7 +204,7 @@ pub fn start_rcon_listener(
 
                             // ===== 玩家离开 =====
                             if body.contains("PlayerDisconnected") || body.contains("left the server") {
-                                let _ = msg_tx.send(AgentMessage::Log { data: LogEntry {
+                                let _ = msg_tx.blocking_send(AgentMessage::Log { data: LogEntry {
                                     log_level: "INFO".into(), category: Some("PlayerLeave".into()),
                                     message: body.clone(), raw_line: Some(body), logged_at: chrono::Utc::now(),
                                 }});
@@ -213,7 +213,7 @@ pub fn start_rcon_listener(
 
                             // ===== 管理员镜头 =====
                             if body.contains("POSSESSED_ADMIN_CAMERA") || body.contains("UNPOSSESSED_ADMIN_CAMERA") {
-                                let _ = msg_tx.send(AgentMessage::Log { data: LogEntry {
+                                let _ = msg_tx.blocking_send(AgentMessage::Log { data: LogEntry {
                                     log_level: "INFO".into(), category: Some("FlyEvent".into()),
                                     message: body.clone(), raw_line: Some(body), logged_at: chrono::Utc::now(),
                                 }});
@@ -222,7 +222,7 @@ pub fn start_rcon_listener(
 
                             // ===== 管理员操作 =====
                             if body.contains("PLAYER_WARNED") || body.contains("PLAYER_KICKED") || body.contains("PLAYER_BANNED") {
-                                let _ = msg_tx.send(AgentMessage::Log { data: LogEntry {
+                                let _ = msg_tx.blocking_send(AgentMessage::Log { data: LogEntry {
                                     log_level: "WARN".into(), category: Some("AdminAction".into()),
                                     message: body.clone(), raw_line: Some(body.clone()), logged_at: chrono::Utc::now(),
                                 }});
