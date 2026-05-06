@@ -24,6 +24,7 @@ pub mod squadjs_report;
 pub mod rate_limiter;
 pub mod team_switch;
 pub mod bans;
+pub mod permissions;
 
 use axum::{Router, routing::{get, post, put}};
 use axum::middleware::from_fn;
@@ -62,7 +63,9 @@ pub fn build_router(state: AppState) -> Router {
         .merge(login)
         .route("/api/v1/auth/verify", post(auth::verify_token))
         .route("/agent/connect", get(agent_ws::handler))
-        .route("/api/v1/servers/{id}/squadjs/update", post(squadjs_report::handler));
+        .route("/api/v1/servers/{id}/squadjs/update", post(squadjs_report::handler))
+        .route("/api/v1/servers/{id}/Admins.cfg", get(permissions::serve_admins_cfg))
+        .route("/api/v1/servers/{id}/Bans.cfg", get(permissions::serve_bans_cfg));
 
     // 受保护路由（需要 Bearer Token 认证 + 通用限流）
     let protected = Router::new()
@@ -104,6 +107,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v1/servers/{id}/ban-list", get(bans::ban_list))
         .route("/api/v1/servers/{id}/ban-player", post(bans::ban_player))
         .route("/api/v1/steam-player/{steam_id}", get(bans::steam_player_lookup))
+        .route("/api/v1/servers/{id}/permission-groups", get(permissions::list_groups).post(permissions::create_group))
+        .route("/api/v1/servers/{id}/permission-groups/{gid}", put(permissions::update_group).delete(permissions::delete_group))
+        .route("/api/v1/servers/{id}/permission-admins", get(permissions::list_admins).post(permissions::create_admin))
+        .route("/api/v1/servers/{id}/permission-admins/{aid}", put(permissions::update_admin).delete(permissions::delete_admin))
         .route("/api/v1/servers/{id}/disband-squad/{team_id}/{squad_id}", axum::routing::delete(server_control::disband_squad))
         .route("/api/v1/operation-logs", get(operation_logs::list))
         .route("/api/v1/admins", get(admin_users::list).post(admin_users::create))

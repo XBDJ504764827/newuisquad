@@ -44,30 +44,60 @@ pub async fn steam_player_lookup(
     Ok(Json(serde_json::json!({ "steam_id": steam_id, "player_name": player_name })))
 }
 
-/// 解析 ban.cfg 内容 "Ban=STEAMID:DURATION:REASON"
+/// 解析 ban.cfg 内容（兼容两种格式）:
+/// 新格式: SteamID64:Duration //Reason 处理人：Admin
+/// 旧格式: Ban=SteamID64:Duration:Reason
 fn parse_ban_cfg(content: &str) -> Vec<MergedBanEntry> {
     content.lines()
         .filter_map(|line| {
             let line = line.trim();
-            if !line.starts_with("Ban=") { return None; }
-            let rest = &line[4..]; // skip "Ban="
-            let mut parts = rest.splitn(3, ':');
-            let steam_id = parts.next()?.to_string();
-            let duration_str = parts.next()?.to_string();
-            let reason = parts.next().unwrap_or("").to_string();
-            if steam_id.is_empty() || steam_id.len() < 10 { return None; }
-            let duration = match duration_str.parse::<i32>() {
-                Ok(0) => "永久封禁".to_string(),
-                Ok(mins) => format!("{}分钟", mins),
-                Err(_) => "永久封禁".to_string(),
-            };
-            Some(MergedBanEntry {
-                steam_id,
-                player_name: String::new(),
-                duration,
-                reason,
-                source: "ban.cfg".to_string(),
-            })
+            if line.is_empty() || line.starts_with("//") || line.starts_with('#') { return None; }
+
+            // 新格式: SteamID64:Duration //Comment
+            if !line.starts_with("Ban=") {
+                let (data, comment) = if let Some(pos) = line.find(" //") {
+                    (line[..pos].trim(), line[pos + 3..].trim())
+                } else {
+                    (line, "")
+                };
+                let mut parts = data.splitn(2, ':');
+                let steam_id = parts.next()?.to_string();
+                let duration_str = parts.next()?.to_string();
+                if steam_id.len() < 10 { return None; }
+                let duration = match duration_str.parse::<i32>() {
+                    Ok(0) => "永久封禁".to_string(),
+                    Ok(mins) => format!("{}分钟", mins),
+                    Err(_) => "永久封禁".to_string(),
+                };
+                let reason = if comment.is_empty() { "".to_string() } else { comment.to_string() };
+                Some(MergedBanEntry {
+                    steam_id,
+                    player_name: String::new(),
+                    duration,
+                    reason,
+                    source: "ban.cfg".to_string(),
+                })
+            } else {
+                // 旧格式: Ban=SteamID64:Duration:Reason
+                let rest = &line[4..];
+                let mut parts = rest.splitn(3, ':');
+                let steam_id = parts.next()?.to_string();
+                let duration_str = parts.next()?.to_string();
+                let reason = parts.next().unwrap_or("").to_string();
+                if steam_id.is_empty() || steam_id.len() < 10 { return None; }
+                let duration = match duration_str.parse::<i32>() {
+                    Ok(0) => "永久封禁".to_string(),
+                    Ok(mins) => format!("{}分钟", mins),
+                    Err(_) => "永久封禁".to_string(),
+                };
+                Some(MergedBanEntry {
+                    steam_id,
+                    player_name: String::new(),
+                    duration,
+                    reason,
+                    source: "ban.cfg".to_string(),
+                })
+            }
         })
         .collect()
 }
@@ -101,7 +131,24 @@ pub async fn ban_list(
         }
     }
 
-    // 2. 读取 ban.cfg
+    // 2. 从 bans 表（DB 存储的封禁记录）
+    if let Ok(db_bans) = sqlx::query_as::<_, crate::models::permission::BanRecord>(
+        "SELECT * FROM bans WHERE server_id=$1 ORDER BY id"
+    ).bind(server_id).fetch_all(&state.pool).await {
+        for b in db_bans {
+            if seen.insert(b.steam_id.clone()) {
+                bans.push(MergedBanEntry {
+                    steam_id: b.steam_id,
+                    player_name: b.player_name,
+                    duration: if b.duration == 0 { "永久封禁".to_string() } else { format!("{}分钟", b.duration) },
+                    reason: b.reason,
+                    source: "DB".to_string(),
+                });
+            }
+        }
+    }
+
+    // 3. 读取 ban.cfg
     if let Some(ref agent_pool) = state.agent_pool {
         for path in &["SquadGame/ServerConfig/Bans.cfg", "Bans.cfg", "ban.cfg"] {
             let request_id = Uuid::new_v4().to_string();
@@ -159,8 +206,9 @@ pub async fn ban_player(
         return Ok(Json(serde_json::json!({ "error": "请填写封禁理由" })));
     }
 
+    let admin = query.admin_user.unwrap_or_default();
     let duration_str = if req.duration == 0 { "0".to_string() } else { req.duration.to_string() };
-    let new_line = format!("Ban={}:{}:{}", req.steam_id, duration_str, req.reason);
+    let new_line = format!("{}:{} //{} 处理人：{}", req.steam_id, duration_str, req.reason, admin);
 
     // 查询 RCON 凭据（后续两步都用）
     let rcon_creds = sqlx::query_as::<_, (String, i32, String)>(
@@ -240,8 +288,23 @@ pub async fn ban_player(
         None
     };
 
-    // 3. 记录操作日志
-    let admin = query.admin_user.unwrap_or_default();
+    // 3. 写入 bans 表（供 HTTP Bans.cfg 服务）
+    let player_name = crate::services::steam_service::fetch_player_names(
+        &state.steam_api_key, &[req.steam_id.clone()],
+    ).await.get(&req.steam_id).cloned().unwrap_or_default();
+    let _ = sqlx::query(
+        "INSERT INTO bans (server_id, steam_id, player_name, duration, reason, admin_user) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (server_id, steam_id) DO UPDATE SET duration=$4, reason=$5, admin_user=$6, player_name=$3, created_at=NOW()"
+    )
+    .bind(server_id)
+    .bind(&req.steam_id)
+    .bind(&player_name)
+    .bind(req.duration)
+    .bind(&req.reason)
+    .bind(&admin)
+    .execute(&state.pool)
+    .await;
+
+    // 4. 记录操作日志
     let _ = sqlx::query(
         "INSERT INTO admin_actions (server_id, admin_name, action_type, target, message, raw_line, logged_at) VALUES ($1,$2,'ban',$3,$4,$5,NOW())"
     )
@@ -252,6 +315,28 @@ pub async fn ban_player(
     .bind(&new_line)
     .execute(&state.pool)
     .await;
+
+    // 5. 也获取本机 RCON 封禁列表中的 bans 写入 bans 表（保持同步）
+    if let Some((ref ip, rcon_port, ref rcon_pass)) = rcon_creds {
+        if let Ok(mut rcon) = SquadRcon::connect(ip, rcon_port as u16, rcon_pass).await {
+            if let Ok(raw) = rcon.execute("AdminListBans").await {
+                for entry in crate::services::rcon_server_info::parse_ban_list(&raw) {
+                    if !entry.steam_id.is_empty() {
+                        let _ = sqlx::query(
+                            "INSERT INTO bans (server_id, steam_id, player_name, duration, reason, admin_user) VALUES ($1,$2,$3,0,$4,$5) ON CONFLICT (server_id, steam_id) DO NOTHING"
+                        )
+                        .bind(server_id)
+                        .bind(&entry.steam_id)
+                        .bind(&entry.player_name)
+                        .bind(&entry.reason)
+                        .bind(&entry.admin)
+                        .execute(&state.pool)
+                        .await;
+                    }
+                }
+            }
+        }
+    }
 
     if rcon_result.is_some() || file_updated {
         Ok(Json(serde_json::json!({
