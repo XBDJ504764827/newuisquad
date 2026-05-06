@@ -20,6 +20,7 @@ const pageComponents: Record<PageId, React.ComponentType> = {
   'player-info': dynamic(() => import('./components/pages/PlayerInfoPage'), { loading: () => <LoadingPlaceholder /> }),
   'admin-users': dynamic(() => import('./components/pages/AdminUsersPage'), { loading: () => <LoadingPlaceholder /> }),
   'permission-settings': dynamic(() => import('./components/pages/PermissionSettingsPage'), { loading: () => <LoadingPlaceholder /> }),
+  'ban-management': dynamic(() => import('./components/pages/BanManagementPage'), { loading: () => <LoadingPlaceholder /> }),
 };
 
 function LoadingPlaceholder() {
@@ -39,6 +40,7 @@ const breadcrumbMap: Record<PageId, { cat: string; page: string }> = {
   'player-info': { cat: '玩家管理', page: '玩家信息' },
   'admin-users': { cat: '玩家管理', page: '网站管理员' },
   'permission-settings': { cat: '玩家管理', page: '用户权限设置' },
+  'ban-management': { cat: '玩家管理', page: '玩家封禁' },
   'config-file': { cat: '系统配置', page: '配置文件' },
   'config-panel': { cat: '系统配置', page: '配置面板' },
 };

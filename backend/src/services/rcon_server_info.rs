@@ -269,7 +269,7 @@ fn parse_map(raw: &str) -> (String, String) {
     (map_name, game_mode)
 }
 
-fn parse_ban_list(raw: &str) -> Vec<BanEntry> {
+pub fn parse_ban_list(raw: &str) -> Vec<BanEntry> {
     let mut bans = Vec::new();
     for line in raw.lines() {
         let line = line.trim();

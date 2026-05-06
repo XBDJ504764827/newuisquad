@@ -23,6 +23,7 @@ pub mod chat;
 pub mod squadjs_report;
 pub mod rate_limiter;
 pub mod team_switch;
+pub mod bans;
 
 use axum::{Router, routing::{get, post, put}};
 use axum::middleware::from_fn;
@@ -100,6 +101,9 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v1/servers/{id}/bans", get(server_control::get_bans))
         .route("/api/v1/servers/{id}/warns", get(server_control::get_warns))
         .route("/api/v1/servers/{id}/player-action", post(server_control::player_action))
+        .route("/api/v1/servers/{id}/ban-list", get(bans::ban_list))
+        .route("/api/v1/servers/{id}/ban-player", post(bans::ban_player))
+        .route("/api/v1/steam-player/{steam_id}", get(bans::steam_player_lookup))
         .route("/api/v1/servers/{id}/disband-squad/{team_id}/{squad_id}", axum::routing::delete(server_control::disband_squad))
         .route("/api/v1/operation-logs", get(operation_logs::list))
         .route("/api/v1/admins", get(admin_users::list).post(admin_users::create))

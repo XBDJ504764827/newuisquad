@@ -7,8 +7,7 @@ import { TkSettingsTab } from './ConfigPanel/TkSettingsTab';
 import { DamageNotifyTab } from './ConfigPanel/DamageNotifyTab';
 
 const configTabs = [
-  { id: 'tab-1', label: '快捷设置' },
-  { id: 'tab-2', label: '误杀设置' },
+  { id: 'tab-1', label: '误杀设置' },
   { id: 'tab-3', label: '挂机设置' },
   { id: 'tab-4', label: '代码跳边设置' },
   { id: 'tab-5', label: '广播设置' },
@@ -309,18 +308,6 @@ export default function ConfigPanelPage() {
         </div>
 
         {activeTab === 'tab-1' && (
-          <div className="tab-content" style={{ display: 'block' }}>
-            <h4 style={{ marginBottom: 16 }}>快捷设置</h4>
-            <p style={{ color: 'var(--text3)', fontSize: 12 }}>此处可快速开关常用的插件和服务器基础功能。</p>
-            <div style={{ marginTop: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 10 }}><input type="checkbox" defaultChecked /> 启用服务器密码保护</label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 10 }}><input type="checkbox" defaultChecked /> 开启反作弊模块</label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 10 }}><input type="checkbox" /> 允许全员语音跨队</label>
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'tab-2' && (
           <TkSettingsTab
             selectedServerId={selectedServerId}
             tkLoading={tkLoading}
@@ -332,7 +319,7 @@ export default function ConfigPanelPage() {
           />
         )}
 
-        {activeTab === 'tab-3' && (
+        {activeTab === 'tab-2' && (
           <div className="tab-content" style={{ display: 'block' }}>
             <h4 style={{ marginBottom: 20 }}>挂机设置 (AFK)</h4>
             {!selectedServerId ? <p style={{ color: 'var(--text3)', fontSize: 12 }}>请先添加游戏服务器。</p>
@@ -362,7 +349,7 @@ export default function ConfigPanelPage() {
             )}
           </div>
         )}
-        {activeTab === 'tab-4' && (
+        {activeTab === 'tab-3' && (
           <div className="tab-content" style={{ display: 'block' }}>
             <h4 style={{ marginBottom: 20 }}>代码跳边设置</h4>
             {!selectedServerId ? (
@@ -390,7 +377,7 @@ export default function ConfigPanelPage() {
             )}
           </div>
         )}
-        {activeTab === 'tab-5' && (
+        {activeTab === 'tab-4' && (
           <div className="tab-content" style={{ display: 'block' }}>
             <h4 style={{ marginBottom: 20 }}>广播设置</h4>
             {!selectedServerId ? <p style={{ color: 'var(--text3)', fontSize: 12 }}>请先添加游戏服务器。</p>
@@ -466,7 +453,7 @@ export default function ConfigPanelPage() {
             )}
           </div>
         )}
-        {activeTab === 'tab-6' && (
+        {activeTab === 'tab-5' && (
           <div className="tab-content" style={{ display: 'block' }}>
             <h4 style={{ marginBottom: 20 }}>队伍设置</h4>
             {!selectedServerId ? <p style={{ color: 'var(--text3)', fontSize: 12 }}>请先添加游戏服务器。</p>
@@ -510,7 +497,7 @@ export default function ConfigPanelPage() {
             )}
           </div>
         )}
-        {activeTab === 'tab-7' && (
+        {activeTab === 'tab-6' && (
           <DamageNotifyTab
             selectedServerId={selectedServerId}
             damageNotifyLoading={damageNotifyLoading}
@@ -521,7 +508,7 @@ export default function ConfigPanelPage() {
             onSave={saveDamageNotifySettings}
           />
         )}
-        {activeTab === 'tab-8' && (
+        {activeTab === 'tab-7' && (
           <div className="tab-content" style={{ display: 'block' }}>
             <h4 style={{ marginBottom: 20 }}>异常伤害</h4>
             {!selectedServerId ? (

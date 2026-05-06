@@ -52,7 +52,8 @@ export type PageId =
   | 'action-logs'
   | 'player-info'
   | 'admin-users'
-  | 'permission-settings';
+  | 'permission-settings'
+  | 'ban-management';
 
 export interface KillEvent {
   id: number;
