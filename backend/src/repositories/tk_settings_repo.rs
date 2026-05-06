@@ -15,12 +15,14 @@ pub async fn get_or_create(pool: &PgPool, server_id: i32) -> Result<TkSettings, 
 pub async fn update(pool: &PgPool, server_id: i32, req: &UpdateTkSettingsRequest) -> Result<TkSettings, sqlx::Error> {
     let current = get_or_create(pool, server_id).await?;
     sqlx::query_as::<_, TkSettings>(
-        "UPDATE tk_settings SET enabled=$1, max_team_kills=$2, apology_time_minutes=$3, notification_message=$4, updated_at=NOW() WHERE server_id=$5 RETURNING *"
+        "UPDATE tk_settings SET enabled=$1, max_team_kills=$2, apology_time_minutes=$3, apology_keyword=$4, notification_message=$5, tk_broadcast_message=$6, updated_at=NOW() WHERE server_id=$7 RETURNING *"
     )
     .bind(req.enabled.unwrap_or(current.enabled))
     .bind(req.max_team_kills.unwrap_or(current.max_team_kills))
     .bind(req.apology_time_minutes.unwrap_or(current.apology_time_minutes))
+    .bind(req.apology_keyword.as_deref().unwrap_or(&current.apology_keyword))
     .bind(req.notification_message.as_deref().unwrap_or(current.notification_message.as_deref().unwrap_or("")))
+    .bind(req.tk_broadcast_message.as_deref().unwrap_or(current.tk_broadcast_message.as_deref().unwrap_or("")))
     .bind(server_id)
     .fetch_one(pool)
     .await

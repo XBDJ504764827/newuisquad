@@ -1,9 +1,9 @@
 'use client';
 
 interface DamageNotifyForm {
-  enabled: boolean; keyword: string;
-  min_damage: number; notify_tk: boolean; notify_damage: boolean;
-  notify_high_damage: boolean; high_damage_threshold: number;
+  enabled: boolean;
+  notify_kill: boolean;
+  notify_damage: boolean;
 }
 
 interface Props {
@@ -19,7 +19,7 @@ interface Props {
 export function DamageNotifyTab({ selectedServerId, damageNotifyLoading, damageNotifyForm, damageNotifyError, damageNotifySaving, onFormChange, onSave }: Props) {
   return (
     <div className="tab-content" style={{ display: 'block' }}>
-      <h4 style={{ marginBottom: 20 }}>伤害 / TK 通知</h4>
+      <h4 style={{ marginBottom: 20 }}>伤害通知</h4>
       {!selectedServerId ? (
         <p style={{ color: 'var(--text3)', fontSize: 12 }}>请先添加游戏服务器。</p>
       ) : damageNotifyLoading ? (
@@ -31,76 +31,60 @@ export function DamageNotifyTab({ selectedServerId, damageNotifyLoading, damageN
             <div>
               <div style={{ fontWeight: 600, fontSize: 13 }}>启用伤害通知服务</div>
               <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4, lineHeight: 1.5 }}>
-                开启后，游戏内的伤害和 TK 事件将通过 AdminBroadcast 实时广播到聊天框
+                开启后，玩家造成击倒或伤害时将收到 AdminWarn 警告信息
               </div>
             </div>
           </label>
 
           <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16 }} />
 
-          <div style={{ padding: '12px 14px', background: 'rgba(239,68,68,0.05)', borderRadius: 8, border: '1px solid rgba(239,68,68,0.15)' }}>
-            <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}>
-              <div>
-                <div style={{ fontWeight: 600, fontSize: 13 }}>💀 误杀 (TK) 通知</div>
-                <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>任何友军伤害事件都会广播</div>
-              </div>
-              <input type="checkbox" checked={damageNotifyForm.notify_tk}
-                onChange={e => onFormChange({ ...damageNotifyForm, notify_tk: e.target.checked })}
-                disabled={!damageNotifyForm.enabled} />
-            </label>
-          </div>
-
+          {/* 击倒通知 */}
           <div style={{ padding: '12px 14px', background: 'var(--bg3)', borderRadius: 8, border: '1px solid var(--border)' }}>
             <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}>
               <div>
-                <div style={{ fontWeight: 600, fontSize: 13 }}>💥 高伤害击杀通知</div>
-                <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>对敌方造成一击必杀（伤害 ≥ 阈值）时广播</div>
+                <div style={{ fontWeight: 600, fontSize: 13 }}>击倒通知</div>
+                <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
+                  玩家击倒另一名玩家时，发送 AdminWarn 警告攻击者
+                </div>
               </div>
-              <input type="checkbox" checked={damageNotifyForm.notify_high_damage}
-                onChange={e => onFormChange({ ...damageNotifyForm, notify_high_damage: e.target.checked })}
+              <input type="checkbox" checked={damageNotifyForm.notify_kill}
+                onChange={e => onFormChange({ ...damageNotifyForm, notify_kill: e.target.checked })}
                 disabled={!damageNotifyForm.enabled} />
             </label>
-            {damageNotifyForm.notify_high_damage && (
-              <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
-                <span style={{ fontSize: 12, color: 'var(--text3)' }}>阈值：</span>
-                <input type="number" className="rcon-input" style={{ width: 80, textAlign: 'center' }}
-                  value={damageNotifyForm.high_damage_threshold}
-                  onChange={e => onFormChange({ ...damageNotifyForm, high_damage_threshold: parseInt(e.target.value) || 0 })}
-                  disabled={!damageNotifyForm.enabled} />
-                <span style={{ fontSize: 12, color: 'var(--text3)' }}>伤害值</span>
+            {damageNotifyForm.notify_kill && (
+              <div style={{ marginTop: 10, padding: '8px 12px', background: 'rgba(0,0,0,0.15)', borderRadius: 6, fontFamily: 'monospace', fontSize: 12, color: 'var(--text2)' }}>
+                AdminWarn "玩家名" "击倒了被击倒玩家"
               </div>
             )}
           </div>
 
+          {/* 伤害通知 */}
           <div style={{ padding: '12px 14px', background: 'var(--bg3)', borderRadius: 8, border: '1px solid var(--border)' }}>
             <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}>
               <div>
-                <div style={{ fontWeight: 600, fontSize: 13 }}>🔫 普通伤害通知</div>
-                <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>非 TK 伤害超过阈值时广播（⚠️ 可能大量刷屏）</div>
+                <div style={{ fontWeight: 600, fontSize: 13 }}>伤害通知</div>
+                <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
+                  玩家造成伤害时，发送 AdminWarn 警告攻击者（⚠️ 可能大量刷屏）
+                </div>
               </div>
               <input type="checkbox" checked={damageNotifyForm.notify_damage}
                 onChange={e => onFormChange({ ...damageNotifyForm, notify_damage: e.target.checked })}
                 disabled={!damageNotifyForm.enabled} />
             </label>
             {damageNotifyForm.notify_damage && (
-              <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
-                <span style={{ fontSize: 12, color: 'var(--text3)' }}>最低伤害：</span>
-                <input type="number" className="rcon-input" style={{ width: 80, textAlign: 'center' }}
-                  value={damageNotifyForm.min_damage}
-                  onChange={e => onFormChange({ ...damageNotifyForm, min_damage: parseInt(e.target.value) || 0 })}
-                  disabled={!damageNotifyForm.enabled} />
-                <span style={{ fontSize: 12, color: 'var(--text3)' }}>伤害值</span>
+              <div style={{ marginTop: 10, padding: '8px 12px', background: 'rgba(0,0,0,0.15)', borderRadius: 6, fontFamily: 'monospace', fontSize: 12, color: 'var(--text2)' }}>
+                AdminWarn "玩家名" "对目标玩家造成了XX点伤害"
               </div>
             )}
           </div>
 
-          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16 }} />
-
-          <div>
-            <label style={{ fontSize: 12, color: 'var(--text2)', display: 'block', marginBottom: 6 }}>玩家触发关键字（HUD 查询，预留功能）</label>
-            <input className="rcon-input" style={{ width: 200 }} value={damageNotifyForm.keyword}
-              onChange={e => onFormChange({ ...damageNotifyForm, keyword: e.target.value })}
-              placeholder="!damage" />
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+            <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 6 }}>RCON 命令说明</div>
+            <div style={{ fontSize: 11, color: 'var(--text2)', lineHeight: 1.6 }}>
+              <div>• 击倒通知使用 <b>AdminWarn</b> 对攻击者发送黄字警告</div>
+              <div>• 伤害通知使用 <b>AdminWarn</b> 对攻击者发送黄字警告</div>
+              <div>• 队友伤害由误杀设置功能独立处理，不在此处重复</div>
+            </div>
           </div>
 
           {damageNotifyError && <div style={{ color: 'var(--red)', fontSize: 12 }}>{damageNotifyError}</div>}

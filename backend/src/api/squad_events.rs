@@ -51,12 +51,12 @@ pub async fn kill_events(
             .bind(server_id).fetch_one(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.0
     };
 
-    let items = sqlx::query_as::<_, (i32, i32, String, String, String, String, f64, String, bool, bool, chrono::DateTime<chrono::Utc>)>(
-        "SELECT id, server_id, attacker_name, attacker_eos, attacker_steam64, victim_name, damage, weapon, is_kill, is_teamkill, logged_at FROM kill_events WHERE server_id=$1 ORDER BY logged_at DESC LIMIT $2 OFFSET $3"
+    let items = sqlx::query_as::<_, (i32, i32, String, String, String, String, String, String, f64, String, String, bool, bool, chrono::DateTime<chrono::Utc>)>(
+        "SELECT id, server_id, attacker_name, attacker_eos, attacker_steam64, victim_name, victim_eos, victim_steam64, damage, weapon, event_type, is_kill, is_teamkill, logged_at FROM kill_events WHERE server_id=$1 ORDER BY logged_at DESC LIMIT $2 OFFSET $3"
     ).bind(server_id).bind(per_page).bind(offset).fetch_all(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let data: Vec<serde_json::Value> = items.into_iter().map(|(id, sid, an, ae, as64, vn, dmg, wp, ik, itk, ts)| {
-        serde_json::json!({ "id": id, "server_id": sid, "attacker_name": an, "attacker_eos": ae, "attacker_steam64": as64, "victim_name": vn, "damage": dmg, "weapon": wp, "is_kill": ik, "is_teamkill": itk, "logged_at": ts })
+    let data: Vec<serde_json::Value> = items.into_iter().map(|(id, sid, an, ae, as64, vn, ve, vs64, dmg, wp, et, ik, itk, ts)| {
+        serde_json::json!({ "id": id, "server_id": sid, "attacker_name": an, "attacker_eos": ae, "attacker_steam64": as64, "victim_name": vn, "victim_eos": ve, "victim_steam64": vs64, "damage": dmg, "weapon": wp, "event_type": et, "is_kill": ik, "is_teamkill": itk, "logged_at": ts })
     }).collect();
 
     Ok(Json(serde_json::json!({ "data": data, "total": total, "page": page, "per_page": per_page })))

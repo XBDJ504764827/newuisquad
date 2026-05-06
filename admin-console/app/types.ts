@@ -54,6 +54,23 @@ export type PageId =
   | 'admin-users'
   | 'permission-settings';
 
+export interface KillEvent {
+  id: number;
+  server_id: number;
+  attacker_name: string;
+  attacker_eos: string;
+  attacker_steam64: string;
+  victim_name: string;
+  victim_eos: string;
+  victim_steam64: string;
+  damage: number;
+  weapon: string;
+  event_type: string; // "damage" | "wound" | "death"
+  is_kill: boolean;
+  is_teamkill: boolean;
+  logged_at: string;
+}
+
 export interface NavItemDef {
   id: PageId;
   label: string;

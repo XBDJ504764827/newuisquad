@@ -10,7 +10,6 @@ use crate::rcon_client::squad::SquadRcon;
 #[derive(Debug, Clone)]
 struct PlayerTkState {
     tk_count: u32,
-    /// 第3次误杀后的道歉截止时间
     apology_deadline: Option<Instant>,
     apologized: bool,
     kicked: bool,
@@ -26,7 +25,7 @@ impl TkTracker {
         Self { players: HashMap::new() }
     }
 
-    fn record_tk(&mut self, server_id: i32, steam_id: &str) -> (u32, bool) {
+    fn record_tk(&mut self, server_id: i32, steam_id: &str, max_tk: u32) -> (u32, bool) {
         let key = (server_id, steam_id.to_string());
         let entry = self.players.entry(key.clone()).or_insert_with(|| PlayerTkState {
             tk_count: 0,
@@ -40,7 +39,7 @@ impl TkTracker {
         }
 
         entry.tk_count += 1;
-        let need_kick_timer = entry.tk_count >= 3 && !entry.apologized;
+        let need_kick_timer = entry.tk_count >= max_tk && !entry.apologized;
         (entry.tk_count, need_kick_timer)
     }
 
@@ -84,13 +83,11 @@ impl TkTracker {
 
 /// 尝试从日志行解析 TK 事件。返回 (attacker_name, attacker_steamid64, victim_name)
 fn parse_tk(line: &str) -> Option<(String, String, String)> {
-    // Squad 团队击杀格式1: TeamKill: Attacker=Name (SteamID) Victim=Name (SteamID) Weapon=...
     if line.to_lowercase().contains("teamkill") || line.to_lowercase().contains("team kill") {
         let mut attacker = String::new();
         let mut attacker_id = String::new();
         let mut victim = String::new();
 
-        // 提取 Attacker=Name (ID) 或 "Name" (ID)
         for pattern in &["Attacker=", "attacker=", "killer=", "Killer="] {
             if let Some(pos) = line.find(pattern) {
                 let rest = &line[pos + pattern.len()..];
@@ -101,7 +98,6 @@ fn parse_tk(line: &str) -> Option<(String, String, String)> {
             }
         }
 
-        // 尝试从括号中提取 SteamID
         if let Some(start) = line.find('(') {
             let rest = &line[start + 1..];
             if let Some(end) = rest.find(')') {
@@ -112,7 +108,6 @@ fn parse_tk(line: &str) -> Option<(String, String, String)> {
             }
         }
 
-        // 提取 Victim=Name
         for pattern in &["Victim=", "victim="] {
             if let Some(pos) = line.find(pattern) {
                 let rest = &line[pos + pattern.len()..];
@@ -128,10 +123,8 @@ fn parse_tk(line: &str) -> Option<(String, String, String)> {
         }
     }
 
-    // Squad 日志格式2: Player "Name" (SteamID) killed "Name" (SteamID) with Weapon (teamkill)
     if line.to_lowercase().contains("(teamkill)") {
         let parts: Vec<&str> = line.split_whitespace().collect();
-        // 简单提取：第一个带引号的名字和括号中的ID作为攻击者
         for i in 0..parts.len() {
             if parts[i].starts_with('(') && parts[i].ends_with(')') {
                 let id = &parts[i][1..parts[i].len()-1];
@@ -157,10 +150,8 @@ fn parse_chat(line: &str) -> Option<(String, String, String)> {
         return None;
     }
 
-    // 格式: [Chat] PlayerName (SteamID): message
     if let Some(chat_pos) = line.find("[Chat]").or_else(|| line.find("Chat:")) {
         let rest = &line[chat_pos..];
-        // 跳过 [Chat] 或 Chat:
         let content = if rest.starts_with("[Chat]") {
             &rest[6..]
         } else {
@@ -168,7 +159,6 @@ fn parse_chat(line: &str) -> Option<(String, String, String)> {
         };
         let content = content.trim();
 
-        // 匹配 "PlayerName (SteamID): message"
         if let Some(colon_pos) = content.find(": ") {
             let header = &content[..colon_pos];
             let message = content[colon_pos + 2..].trim();
@@ -207,26 +197,37 @@ pub fn start_tk_monitor(
                     if server_id == 0 { continue; }
 
                     // 1. 检测 TK 事件
-                    if let Some((attacker_name, attacker_id, _victim_name)) = parse_tk(raw) {
-                        // 查询该服务器 TK 设置
-                        let tk_config = match sqlx::query_as::<_, (String, i32, String, i32, Option<String>)>(
-                            "SELECT s.ip, s.rcon_port, s.rcon_password, tk.apology_time_minutes, tk.notification_message FROM servers s JOIN tk_settings tk ON s.id = tk.server_id WHERE s.id = $1 AND tk.enabled = true"
+                    if let Some((attacker_name, attacker_id, victim_name)) = parse_tk(raw) {
+                        // 查询 TK 设置（含道歉关键字和广播消息）
+                        let tk_config = match sqlx::query_as::<_, (String, i32, String, i32, String, Option<String>, Option<String>)>(
+                            "SELECT s.ip, s.rcon_port, s.rcon_password, tk.apology_time_minutes, tk.apology_keyword, tk.notification_message, tk.tk_broadcast_message FROM servers s JOIN tk_settings tk ON s.id = tk.server_id WHERE s.id = $1 AND tk.enabled = true"
                         ).bind(server_id).fetch_optional(&pool).await {
                             Ok(Some(c)) => c,
                             Ok(None) => continue,
                             Err(e) => { tracing::error!(%e, "查询TK设置失败"); continue; }
                         };
 
-                        let (ip, rcon_port, rcon_password, apology_minutes, notif_msg) = tk_config;
+                        let (ip, rcon_port, rcon_password, apology_minutes, apology_keyword, notif_msg, tk_broadcast_msg) = tk_config;
+                        let max_tk = match sqlx::query_scalar::<_, i32>(
+                            "SELECT max_team_kills FROM tk_settings WHERE server_id = $1"
+                        ).bind(server_id).fetch_optional(&pool).await {
+                            Ok(Some(v)) => v as u32,
+                            _ => 3,
+                        };
 
                         let mut t = tracker.write().await;
-                        let (tk_count, need_timer) = t.record_tk(server_id, &attacker_id);
+                        let (tk_count, need_timer) = t.record_tk(server_id, &attacker_id, max_tk);
 
-                        let default_msg = format!("您可能误伤了某位友方，请按J输入SRY道歉，否则将在{}分钟后被踢出。", apology_minutes);
-                        let warn_msg = notif_msg.unwrap_or(default_msg)
+                        // 发送黄字广播: <玩家名称>误伤了<被击倒玩家名称>，输入<道歉关键字>道歉
+                        let broadcast_msg = tk_broadcast_msg.unwrap_or_else(|| {
+                            format!("{}误伤了{}，输入{}道歉", attacker_name, victim_name, apology_keyword)
+                        });
+                        send_rcon_broadcast(&ip, rcon_port as u16, &rcon_password, &broadcast_msg).await;
+
+                        // 发送 AdminWarn 警告
+                        let default_warn = format!("您误伤了友方{}，请在{}分钟内输入{}道歉，超过最大误杀数({}人)将被踢出", victim_name, apology_minutes, apology_keyword, max_tk);
+                        let warn_msg = notif_msg.unwrap_or(default_warn)
                             .replace("{time}", &format!("{}分钟", apology_minutes));
-
-                        // 发送 AdminWarn
                         match send_rcon_warn(&ip, rcon_port as u16, &rcon_password, &attacker_name, &warn_msg).await {
                             Ok(_) => tracing::info!(server_id, player = %attacker_name, tk_count, "已发送误杀警告"),
                             Err(e) => tracing::error!(server_id, player = %attacker_name, error = %e, "AdminWarn 发送失败"),
@@ -251,10 +252,10 @@ pub fn start_tk_monitor(
                                 }
                                 drop(t);
 
-                                let kick_msg = format!("您因累计误杀队友3次且未在{}分钟内道歉，已被踢出服务器", apology_minutes);
-                                match send_rcon_ban(&ip_copy, rcon_port as u16, &rcon_pass_copy, &attacker_name_copy, &kick_msg).await {
+                                let kick_msg = format!("您因累计误杀队友超过{}次且未在{}分钟内道歉，已被踢出服务器", max_tk, apology_minutes);
+                                match send_rcon_kick(&ip_copy, rcon_port as u16, &rcon_pass_copy, &attacker_name_copy, &kick_msg).await {
                                     Ok(_) => tracing::info!(server_id, player = %attacker_name_copy, "玩家因未道歉被踢出"),
-                                    Err(e) => tracing::error!(server_id, player = %attacker_name_copy, error = %e, "AdminBan 发送失败"),
+                                    Err(e) => tracing::error!(server_id, player = %attacker_name_copy, error = %e, "AdminKick 发送失败"),
                                 }
 
                                 tracker_clone.write().await.mark_kicked(server_id, &attacker_id_copy);
@@ -262,13 +263,34 @@ pub fn start_tk_monitor(
                         }
                     }
 
-                    // 2. 检测 SRY 道歉消息
+                    // 2. 检测道歉消息（使用配置的道歉关键字）
                     if let Some((_player_name, steam_id, message)) = parse_chat(raw) {
                         let upper = message.to_uppercase();
-                        if upper.contains("SRY") || upper.contains("SORRY") || upper == "!SORRY" {
+                        // 查询该服务器的道歉关键字
+                        let apology_kw = match sqlx::query_scalar::<_, String>(
+                            "SELECT apology_keyword FROM tk_settings WHERE server_id = $1 AND enabled = true"
+                        ).bind(server_id).fetch_optional(&pool).await {
+                            Ok(Some(kw)) => kw,
+                            _ => "sry".to_string(),
+                        };
+                        let kw_upper = apology_kw.to_uppercase();
+                        if upper.contains(&kw_upper) || upper == format!("!{}", apology_kw).to_uppercase() {
                             let mut t = tracker.write().await;
                             if t.mark_apologized(server_id, &steam_id) {
                                 tracing::info!(server_id, steam_id, "玩家已道歉，取消踢出");
+                                // 发送黄字广播: 道歉成功（不可自定义）
+                                let ip = match sqlx::query_scalar::<_, String>(
+                                    "SELECT ip FROM servers WHERE id = $1"
+                                ).bind(server_id).fetch_optional(&pool).await {
+                                    Ok(Some(ip)) => ip,
+                                    _ => continue,
+                                };
+                                let rcon_cred = sqlx::query_as::<_, (i32, String)>(
+                                    "SELECT rcon_port, rcon_password FROM servers WHERE id = $1"
+                                ).bind(server_id).fetch_optional(&pool).await;
+                                if let Ok(Some((port, pass))) = rcon_cred {
+                                    send_rcon_broadcast(&ip, port as u16, &pass, "道歉成功").await;
+                                }
                             }
                         }
                     }
@@ -292,7 +314,14 @@ async fn send_rcon_warn(ip: &str, port: u16, password: &str, player_name: &str, 
     Ok(())
 }
 
-async fn send_rcon_ban(ip: &str, port: u16, password: &str, player_name: &str, reason: &str) -> Result<(), String> {
+async fn send_rcon_broadcast(ip: &str, port: u16, password: &str, message: &str) {
+    if let Ok(mut rcon) = SquadRcon::connect(ip, port, password).await {
+        let cmd = format!("AdminBroadcast \"{}\"", message);
+        let _ = rcon.execute(&cmd).await;
+    }
+}
+
+async fn send_rcon_kick(ip: &str, port: u16, password: &str, player_name: &str, reason: &str) -> Result<(), String> {
     let mut rcon = SquadRcon::connect(ip, port, password).await?;
     let cmd = format!("AdminKick \"{}\" \"{}\"", player_name, reason);
     rcon.execute(&cmd).await?;

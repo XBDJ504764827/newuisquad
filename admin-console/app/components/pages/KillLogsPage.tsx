@@ -4,9 +4,14 @@ import { useState, useEffect } from 'react';
 
 import { useServers } from '../../lib/useServers';
 import { api } from '../../lib/api';
+import type { KillEvent } from '../../types';
 import Pagination from '../Pagination';
 
-interface KillEvent { id: number; attacker_name: string; attacker_eos: string; attacker_steam64: string; victim_name: string; damage: number; weapon: string; is_kill: boolean; is_teamkill: boolean; logged_at: string; }
+const EVENT_TYPE_LABELS: Record<string, { label: string; className: string }> = {
+  damage: { label: '伤害', className: 'gray' },
+  wound: { label: '击倒', className: 'green' },
+  death: { label: '阵亡', className: 'red' },
+};
 
 export default function KillLogsPage() {
   const { servers } = useServers();
@@ -26,6 +31,11 @@ export default function KillLogsPage() {
       .then(d => { setEvents(d.data || []); setTotal(d.total || 0); setLoading(false); }).catch(() => setLoading(false));
   }, [serverId, page]);
 
+  const typeInfo = (e: KillEvent) => {
+    if (e.is_teamkill) return { label: 'TK', className: 'red' };
+    return EVENT_TYPE_LABELS[e.event_type] || { label: e.event_type, className: 'gray' };
+  };
+
   return (
     <div className="page-view" style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -44,27 +54,31 @@ export default function KillLogsPage() {
             <thead><tr style={{ borderBottom: '2px solid var(--border)', textAlign: 'left' }}>
               <th style={{ padding: '10px 14px', color: 'var(--text3)', fontWeight: 500 }}>时间</th>
               <th style={{ padding: '10px 14px', color: 'var(--text3)', fontWeight: 500 }}>攻击者</th>
-              <th style={{ padding: '10px 14px', color: 'var(--text3)', fontWeight: 500 }}>攻击者 Steam64</th>
               <th style={{ padding: '10px 14px', color: 'var(--text3)', fontWeight: 500 }}>武器</th>
               <th style={{ padding: '10px 14px', color: 'var(--text3)', fontWeight: 500 }}>伤害值</th>
               <th style={{ padding: '10px 14px', color: 'var(--text3)', fontWeight: 500 }}>受害者</th>
               <th style={{ padding: '10px 14px', color: 'var(--text3)', fontWeight: 500 }}>类型</th>
             </tr></thead>
-            <tbody>{events.map(e => (
+            <tbody>{events.map(e => {
+              const ti = typeInfo(e);
+              return (
               <tr key={e.id} style={{ borderBottom: '1px solid var(--border)' }}>
                 <td style={{ padding: '8px 14px', whiteSpace: 'nowrap', fontSize: 12 }}>{new Date(e.logged_at).toLocaleString()}</td>
-                <td style={{ padding: '8px 14px', fontWeight: 500 }}>{e.attacker_name || '-'}</td>
-                <td style={{ padding: '8px 14px', fontFamily: 'monospace', fontSize: 12, color: 'var(--text2)' }}>{e.attacker_steam64 || '-'}</td>
+                <td style={{ padding: '8px 14px', fontWeight: 500 }}>
+                  {e.attacker_name || e.attacker_steam64 || '-'}
+                  {e.attacker_steam64 && <span style={{ fontFamily: 'monospace', fontSize: 10, color: 'var(--text3)', marginLeft: 4 }}>{e.attacker_steam64}</span>}
+                </td>
                 <td style={{ padding: '8px 14px' }}><span className="badge blue" style={{ fontSize: 10 }}>{e.weapon}</span></td>
-                <td style={{ padding: '8px 14px', color: e.is_teamkill ? 'var(--red)' : '#f59e0b', fontWeight: 600 }}>{e.damage.toFixed(1)}</td>
-                <td style={{ padding: '8px 14px', fontWeight: 500 }}>{e.victim_name}</td>
+                <td style={{ padding: '8px 14px', color: e.is_teamkill ? 'var(--red)' : e.event_type === 'death' ? '#ef4444' : '#f59e0b', fontWeight: 600 }}>{e.damage.toFixed(1)}</td>
+                <td style={{ padding: '8px 14px', fontWeight: 500 }}>
+                  {e.victim_name}
+                  {e.victim_steam64 && <span style={{ fontFamily: 'monospace', fontSize: 10, color: 'var(--text3)', marginLeft: 4 }}>{e.victim_steam64}</span>}
+                </td>
                 <td style={{ padding: '8px 14px' }}>
-                  {e.is_teamkill ? <span className="badge red" style={{ fontSize: 10 }}>TK</span>
-                   : e.is_kill ? <span className="badge green" style={{ fontSize: 10 }}>击倒</span>
-                   : <span className="badge gray" style={{ fontSize: 10 }}>伤害</span>}
+                  <span className={`badge ${ti.className}`} style={{ fontSize: 10 }}>{ti.label}</span>
                 </td>
               </tr>
-            ))}</tbody>
+            )})}</tbody>
           </table>}
           <Pagination page={page} total={total} perPage={50} onPageChange={setPage} />
         </div>

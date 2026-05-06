@@ -175,8 +175,22 @@ async fn handle_socket(
                                         ParsedEvent::FlyEvent { player_name, eos_id, steam64, event_type, logged_at } => {
                                             let _ = sqlx::query("INSERT INTO fly_events (server_id, player_name, eos_id, steam64, event_type, logged_at) VALUES ($1,$2,$3,$4,$5,$6)").bind(sid).bind(&player_name).bind(&eos_id).bind(&steam64).bind(&event_type).bind(logged_at).execute(&pool).await;
                                         }
-                                        ParsedEvent::KillEvent { attacker_name, attacker_eos, attacker_steam64, victim_name, damage, weapon, is_kill, is_teamkill, logged_at } => {
-                                            let _ = sqlx::query("INSERT INTO kill_events (server_id, attacker_name, attacker_eos, attacker_steam64, victim_name, damage, weapon, is_kill, is_teamkill, logged_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)").bind(sid).bind(&attacker_name).bind(&attacker_eos).bind(&attacker_steam64).bind(&victim_name).bind(damage).bind(&weapon).bind(is_kill).bind(is_teamkill).bind(logged_at).execute(&pool).await;
+                                        ParsedEvent::KillEvent { attacker_name, attacker_eos, attacker_steam64, victim_name, victim_eos, victim_steam64, damage, weapon, event_type, is_kill, is_teamkill, logged_at } => {
+                                            // 反查攻击者名称（Wound 事件中 attacker_name 可能为空）
+                                            let resolved_attacker_name = if attacker_name.is_empty() && !attacker_steam64.is_empty() {
+                                                sqlx::query_scalar::<_, String>(
+                                                    "SELECT player_name FROM player_info WHERE server_id=$1 AND steam64=$2 AND player_name!='' ORDER BY last_seen DESC LIMIT 1"
+                                                ).bind(sid).bind(&attacker_steam64).fetch_optional(&pool).await.ok().flatten().unwrap_or_default()
+                                            } else { attacker_name };
+                                            // 反查受害者 EOS/Steam
+                                            let (resolved_victim_eos, resolved_victim_steam64) = if victim_eos.is_empty() && victim_steam64.is_empty() && !victim_name.is_empty() {
+                                                sqlx::query_as::<_, (String, String)>(
+                                                    "SELECT eos_id, steam64 FROM player_info WHERE server_id=$1 AND player_name=$2 AND steam64!='' ORDER BY last_seen DESC LIMIT 1"
+                                                ).bind(sid).bind(&victim_name).fetch_optional(&pool).await.ok().flatten().unwrap_or_default()
+                                            } else { (victim_eos, victim_steam64) };
+                                            let _ = sqlx::query(
+                                                "INSERT INTO kill_events (server_id, attacker_name, attacker_eos, attacker_steam64, victim_name, victim_eos, victim_steam64, damage, weapon, event_type, is_kill, is_teamkill, logged_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)"
+                                            ).bind(sid).bind(&resolved_attacker_name).bind(&attacker_eos).bind(&attacker_steam64).bind(&victim_name).bind(&resolved_victim_eos).bind(&resolved_victim_steam64).bind(damage).bind(&weapon).bind(&event_type).bind(is_kill).bind(is_teamkill).bind(logged_at).execute(&pool).await;
                                         }
                                         ParsedEvent::TeamAssignment { player_name, steam64, team_id, logged_at } => {
                                             let _ = sqlx::query("INSERT INTO team_assignments (server_id, player_name, steam64, team_id, logged_at) VALUES ($1,$2,$3,$4,$5)").bind(sid).bind(&player_name).bind(&steam64).bind(team_id).bind(logged_at).execute(&pool).await;
@@ -199,8 +213,22 @@ async fn handle_socket(
                                         ParsedEvent::AdminAction { admin_name, action_type, target, message, raw_line, logged_at } => {
                                             let _ = sqlx::query("INSERT INTO admin_actions (server_id, admin_name, action_type, target, message, raw_line, logged_at) VALUES ($1,$2,$3,$4,$5,$6,$7)").bind(sid).bind(&admin_name).bind(&action_type).bind(&target).bind(&message).bind(&raw_line).bind(logged_at).execute(&pool).await;
                                         }
-                                        ParsedEvent::PlayerDeath { player_name, steam64, killer_steam64, weapon, logged_at } => {
-                                            let _ = sqlx::query("INSERT INTO kill_events (server_id, attacker_name, attacker_steam64, victim_name, damage, weapon, is_kill, is_teamkill, logged_at) VALUES ($1,'',$2,$3,0,$4,true,false,$5)").bind(sid).bind(&killer_steam64).bind(&player_name).bind(&weapon).bind(logged_at).execute(&pool).await;
+                                        ParsedEvent::PlayerDeath { player_name, steam64: _victim_steam64, killer_steam64, killer_eos, weapon, damage, logged_at } => {
+                                            // 反查攻击者名称
+                                            let resolved_attacker_name = if !killer_steam64.is_empty() {
+                                                sqlx::query_scalar::<_, String>(
+                                                    "SELECT player_name FROM player_info WHERE server_id=$1 AND steam64=$2 AND player_name!='' ORDER BY last_seen DESC LIMIT 1"
+                                                ).bind(sid).bind(&killer_steam64).fetch_optional(&pool).await.ok().flatten().unwrap_or_default()
+                                            } else { String::new() };
+                                            // 反查受害者 EOS/Steam
+                                            let (resolved_victim_eos, resolved_victim_steam64) = if !player_name.is_empty() {
+                                                sqlx::query_as::<_, (String, String)>(
+                                                    "SELECT eos_id, steam64 FROM player_info WHERE server_id=$1 AND player_name=$2 AND steam64!='' ORDER BY last_seen DESC LIMIT 1"
+                                                ).bind(sid).bind(&player_name).fetch_optional(&pool).await.ok().flatten().unwrap_or_default()
+                                            } else { (String::new(), String::new()) };
+                                            let _ = sqlx::query(
+                                                "INSERT INTO kill_events (server_id, attacker_name, attacker_eos, attacker_steam64, victim_name, victim_eos, victim_steam64, damage, weapon, event_type, is_kill, is_teamkill, logged_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'death',true,false,$10)"
+                                            ).bind(sid).bind(&resolved_attacker_name).bind(&killer_eos).bind(&killer_steam64).bind(&player_name).bind(&resolved_victim_eos).bind(&resolved_victim_steam64).bind(damage).bind(&weapon).bind(logged_at).execute(&pool).await;
                                         }
                                         ParsedEvent::ChatMessage { player_name, steam64, message, channel, logged_at } => {
                                             let _ = sqlx::query("INSERT INTO chat_messages (server_id, player_name, steam64, message, channel, logged_at) VALUES ($1,$2,$3,$4,$5,$6)").bind(sid).bind(&player_name).bind(&steam64).bind(&message).bind(&channel).bind(logged_at).execute(&pool).await;

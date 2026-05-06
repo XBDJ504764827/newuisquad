@@ -9,7 +9,9 @@ pub struct TkSettings {
     pub enabled: bool,
     pub max_team_kills: i32,
     pub apology_time_minutes: i32,
+    pub apology_keyword: String,
     pub notification_message: Option<String>,
+    pub tk_broadcast_message: Option<String>,
     pub updated_at: DateTime<Utc>,
 }
 
@@ -18,5 +20,7 @@ pub struct UpdateTkSettingsRequest {
     pub enabled: Option<bool>,
     pub max_team_kills: Option<i32>,
     pub apology_time_minutes: Option<i32>,
+    pub apology_keyword: Option<String>,
     pub notification_message: Option<String>,
+    pub tk_broadcast_message: Option<String>,
 }

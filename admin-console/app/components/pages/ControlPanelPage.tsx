@@ -31,6 +31,7 @@ export default function ControlPanelPage() {
     const logsEndRef = useRef<HTMLDivElement>(null);
     const chatEndRef = useRef<HTMLDivElement>(null);
     const notifId = useRef(0);
+    const prevMapRef = useRef<string>('');
 
     const [form, setForm] = useState({ name: '', ip: '', rcon_port: 28016, rcon_password: '', admin_user: 'Admin' });
     const [submitting, setSubmitting] = useState(false);
@@ -202,6 +203,16 @@ export default function ControlPanelPage() {
         if (!selectedServer) return;
         fetchServerState(); fetchBansWarns();
     }, [selectedServer?.id]);
+
+    // 换图时重置暖服开关（服务器端作弊已自动重置）
+    useEffect(() => {
+        const map = serverState?.map_name;
+        if (map && map !== 'Unknown' && prevMapRef.current && prevMapRef.current !== map) {
+            setWarmupToggles({});
+            try { localStorage.removeItem('warmupToggles'); } catch {}
+        }
+        if (map) prevMapRef.current = map;
+    }, [serverState?.map_name]);
 
     useEffect(() => {
         if (!autoRefresh || !selectedServer) return;

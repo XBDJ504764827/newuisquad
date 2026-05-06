@@ -13,10 +13,8 @@ const configTabs = [
   { id: 'tab-4', label: '代码跳边设置' },
   { id: 'tab-5', label: '广播设置' },
   { id: 'tab-6', label: '队伍设置' },
-  { id: 'tab-7', label: '悬赏设置' },
-  { id: 'tab-8', label: '暖服设置' },
-  { id: 'tab-9', label: '伤害通知' },
-  { id: 'tab-10', label: '异常伤害' },
+  { id: 'tab-7', label: '伤害通知' },
+  { id: 'tab-8', label: '异常伤害' },
 ];
 
 interface AfkSettings {
@@ -30,7 +28,9 @@ interface TkSettings {
   enabled: boolean;
   max_team_kills: number;
   apology_time_minutes: number;
+  apology_keyword: string;
   notification_message: string | null;
+  tk_broadcast_message: string | null;
 }
 
 export default function ConfigPanelPage() {
@@ -43,7 +43,7 @@ export default function ConfigPanelPage() {
   const [tkLoading, setTkLoading] = useState(false);
   const [tkSaving, setTkSaving] = useState(false);
   const [tkError, setTkError] = useState('');
-  const [tkForm, setTkForm] = useState({ enabled: false, max_team_kills: 3, apology_time_minutes: 5, notification_message: '' });
+  const [tkForm, setTkForm] = useState({ enabled: false, max_team_kills: 3, apology_time_minutes: 5, apology_keyword: 'sry', notification_message: '', tk_broadcast_message: '' });
   // AFK settings state
   const [afkLoading, setAfkLoading] = useState(false);
   const [afkSaving, setAfkSaving] = useState(false);
@@ -69,19 +69,12 @@ export default function ConfigPanelPage() {
   const [teamSaving, setTeamSaving] = useState(false);
   const [teamError, setTeamError] = useState('');
   const [teamForm, setTeamForm] = useState({ create_team_broadcast: true, captain_time_check: false, captain_min_playtime: 30, captain_check_min_players: 20, max_create_team_attempts: 3 });
-  // Seed settings state
-  const [seedLoading, setSeedLoading] = useState(false);
-  const [seedSaving, setSeedSaving] = useState(false);
-  const [seedError, setSeedError] = useState('');
-  const [seedForm, setSeedForm] = useState({ enabled: false, player_threshold: 20, vehicle_claim: true, vehicle_fill: true, deploy_restrict: false, kit_restrict: false, heavy_vehicle_require: false, respawn_timer: true, use_enemy_vehicle: false });
   // Damage notify settings state
   const [damageNotifyLoading, setDamageNotifyLoading] = useState(false);
   const [damageNotifySaving, setDamageNotifySaving] = useState(false);
   const [damageNotifyError, setDamageNotifyError] = useState('');
   const [damageNotifyForm, setDamageNotifyForm] = useState({
-    enabled: false, keyword: '!damage',
-    min_damage: 20, notify_tk: true, notify_damage: false,
-    notify_high_damage: true, high_damage_threshold: 80,
+    enabled: false, notify_kill: true, notify_damage: true,
   });
   // Abnormal damage state
   const [abDamageLoading, setAbDamageLoading] = useState(false);
@@ -124,7 +117,7 @@ export default function ConfigPanelPage() {
       .then(r => r.json())
       .then(data => {
         setTkSettings(data);
-        setTkForm({ enabled: data.enabled, max_team_kills: data.max_team_kills, apology_time_minutes: data.apology_time_minutes, notification_message: data.notification_message || '' });
+        setTkForm({ enabled: data.enabled, max_team_kills: data.max_team_kills, apology_time_minutes: data.apology_time_minutes, apology_keyword: data.apology_keyword || 'sry', notification_message: data.notification_message || '', tk_broadcast_message: data.tk_broadcast_message || '' });
         setTkLoading(false);
       })
       .catch(() => setTkLoading(false));
@@ -147,15 +140,10 @@ export default function ConfigPanelPage() {
     api(`/servers/${selectedServerId}/team-settings`).then(r => r.json())
       .then(d => { setTeamForm({ create_team_broadcast: d.create_team_broadcast, captain_time_check: d.captain_time_check, captain_min_playtime: d.captain_min_playtime, captain_check_min_players: d.captain_check_min_players, max_create_team_attempts: d.max_create_team_attempts }); setTeamLoading(false); })
       .catch(() => setTeamLoading(false));
-    // 加载暖服设置
-    setSeedLoading(true);
-    api(`/servers/${selectedServerId}/seed-settings`).then(r => r.json())
-      .then(d => { const f: Record<string, boolean | number> = { enabled: d.enabled, player_threshold: d.player_threshold, vehicle_claim: d.vehicle_claim, vehicle_fill: d.vehicle_fill, deploy_restrict: d.deploy_restrict, kit_restrict: d.kit_restrict, heavy_vehicle_require: d.heavy_vehicle_require, respawn_timer: d.respawn_timer, use_enemy_vehicle: d.use_enemy_vehicle }; setSeedForm(f as any); setSeedLoading(false); })
-      .catch(() => setSeedLoading(false));
     // 加载伤害通知设置
     setDamageNotifyLoading(true);
     api(`/servers/${selectedServerId}/damage-notify-settings`).then(r => r.json())
-      .then(d => { setDamageNotifyForm({ enabled: d.enabled, keyword: d.keyword || '!damage', min_damage: d.min_damage ?? 20, notify_tk: d.notify_tk ?? true, notify_damage: d.notify_damage ?? false, notify_high_damage: d.notify_high_damage ?? true, high_damage_threshold: d.high_damage_threshold ?? 80 }); setDamageNotifyLoading(false); })
+      .then(d => { setDamageNotifyForm({ enabled: d.enabled, notify_kill: d.notify_kill ?? true, notify_damage: d.notify_damage ?? true }); setDamageNotifyLoading(false); })
       .catch(() => setDamageNotifyLoading(false));
     // 加载异常伤害设置
     setAbDamageLoading(true);
@@ -208,13 +196,6 @@ export default function ConfigPanelPage() {
     const data = await res.json(); setTeamSaving(false);
     if (data.error) setTeamError(data.error); else showSuccess('队伍设置已保存');
   }, [selectedServerId, teamForm]);
-
-  const saveSeedSettings = useCallback(async () => {
-    if (!selectedServerId) return; setSeedSaving(true); setSeedError('');
-    const res = await api(`/servers/${selectedServerId}/seed-settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(seedForm) });
-    const data = await res.json(); setSeedSaving(false);
-    if (data.error) setSeedError(data.error); else showSuccess('暖服设置已保存');
-  }, [selectedServerId, seedForm]);
 
   const saveDamageNotifySettings = useCallback(async () => {
     if (!selectedServerId) return; setDamageNotifySaving(true); setDamageNotifyError('');
@@ -529,53 +510,7 @@ export default function ConfigPanelPage() {
             )}
           </div>
         )}
-        {activeTab === 'tab-7' && <div className="tab-content" style={{ display: 'block' }}><h4>悬赏设置</h4><p style={{ color: 'var(--text3)', fontSize: 12, marginTop: 8 }}>击杀连杀玩家的赏金系统设置。（功能UI待实现）</p></div>}
-        {activeTab === 'tab-8' && (
-          <div className="tab-content" style={{ display: 'block' }}>
-            <h4 style={{ marginBottom: 20 }}>暖服设置</h4>
-            {!selectedServerId ? <p style={{ color: 'var(--text3)', fontSize: 12 }}>请先添加游戏服务器。</p>
-            : seedLoading ? <p style={{ color: 'var(--text3)', fontSize: 12 }}>加载中...</p> : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 24, maxWidth: 560 }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}>
-                  <input type="checkbox" checked={seedForm.enabled} onChange={e => setSeedForm({...seedForm, enabled: e.target.checked})} />
-                  <div><div style={{ fontWeight: 500 }}>开启暖服功能</div><div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>在线人数低于阈值时自动触发下方暖服规则</div></div>
-                </label>
-                <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16 }}>
-                  <label style={{ fontSize: 12, color: 'var(--text2)', display: 'block', marginBottom: 6 }}>暖服人数阈值</label>
-                  <input className="rcon-input" type="number" min={1} max={100} style={{ width: 100 }} value={seedForm.player_threshold}
-                    onChange={e => setSeedForm({...seedForm, player_threshold: parseInt(e.target.value) || 0})} />
-                  <p style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>在线人数小于此值时触发暖服</p>
-                </div>
-
-                <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16 }}>
-                  <div style={{ fontWeight: 500, marginBottom: 14 }}>暖服规则</div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                    {[
-                      { k: 'vehicle_claim', label: '载具认领权限', desc: '开启后允许玩家认领载具' },
-                      { k: 'vehicle_fill', label: '载具刷新位置填满', desc: '始终填满所有载具刷新位置' },
-                      { k: 'deploy_restrict', label: '部署要求限制', desc: '限制沙袋、机枪、前哨等部署条件' },
-                      { k: 'kit_restrict', label: '兵种人数限制', desc: '对工兵、医生、迫击炮等职业数量限制' },
-                      { k: 'heavy_vehicle_require', label: '坦克飞机载具要求', desc: '限制重型载具所需套件/人员要求' },
-                      { k: 'respawn_timer', label: '复活时间', desc: '开启=启用计时/更慢复活' },
-                      { k: 'use_enemy_vehicle', label: '使用敌方载具', desc: '允许或禁止使用敌方载具' },
-                    ].map(({ k, label, desc }) => (
-                      <label key={k} style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}>
-                        <input type="checkbox" checked={!!(seedForm as any)[k]} onChange={e => setSeedForm({...seedForm, [k]: e.target.checked})} />
-                        <div><div style={{ fontSize: 13 }}>{label}</div><div style={{ fontSize: 11, color: 'var(--text3)' }}>{desc}</div></div>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-
-                {seedError && <div style={{ color: 'var(--red)', fontSize: 12 }}>{seedError}</div>}
-                <button className="rcon-btn" style={{ width: 'auto', padding: '10px 24px' }} onClick={saveSeedSettings} disabled={seedSaving}>
-                  {seedSaving ? '保存中...' : '保存设置'}
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-        {activeTab === 'tab-9' && (
+        {activeTab === 'tab-7' && (
           <DamageNotifyTab
             selectedServerId={selectedServerId}
             damageNotifyLoading={damageNotifyLoading}
@@ -586,7 +521,7 @@ export default function ConfigPanelPage() {
             onSave={saveDamageNotifySettings}
           />
         )}
-        {activeTab === 'tab-10' && (
+        {activeTab === 'tab-8' && (
           <div className="tab-content" style={{ display: 'block' }}>
             <h4 style={{ marginBottom: 20 }}>异常伤害</h4>
             {!selectedServerId ? (

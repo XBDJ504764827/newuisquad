@@ -21,8 +21,11 @@ pub enum ParsedEvent {
         attacker_eos: String,
         attacker_steam64: String,
         victim_name: String,
+        victim_eos: String,
+        victim_steam64: String,
         damage: f64,
         weapon: String,
+        event_type: String, // "damage" | "wound" | "death"
         is_kill: bool,
         is_teamkill: bool,
         logged_at: NaiveDateTime,
@@ -82,7 +85,9 @@ pub enum ParsedEvent {
         player_name: String,
         steam64: String,
         killer_steam64: String,
+        killer_eos: String,
         weapon: String,
+        damage: f64,
         logged_at: NaiveDateTime,
     },
     ChatMessage {
@@ -343,14 +348,18 @@ pub fn parse_line(line: &str) -> Option<ParsedEvent> {
 
         let is_kill = line.contains("KillingDamage=") || line.contains("Wound()");
         let is_teamkill = line.to_lowercase().contains("teamkill") || line.contains("友军") || line.contains("队友");
+        let event_type = if is_kill { "wound" } else { "damage" };
 
         return Some(ParsedEvent::KillEvent {
             attacker_name: attacker,
             attacker_eos,
             attacker_steam64,
             victim_name: victim,
+            victim_eos: String::new(),
+            victim_steam64: String::new(),
             damage,
             weapon,
+            event_type: event_type.to_string(),
             is_kill,
             is_teamkill,
             logged_at: ts,
@@ -382,14 +391,17 @@ pub fn parse_line(line: &str) -> Option<ParsedEvent> {
         } else { "Unknown".to_string() };
 
         return Some(ParsedEvent::KillEvent {
-            attacker_name: String::new(),
+            attacker_name: String::new(), // 由 agent_ws 从 player_info 反查
             attacker_eos,
             attacker_steam64,
             victim_name: victim,
+            victim_eos: String::new(),
+            victim_steam64: String::new(),
             damage,
             weapon,
+            event_type: "wound".to_string(),
             is_kill: true,
-            is_teamkill: false,
+            is_teamkill: false, // Wound 日志行不含 TK 标记
             logged_at: ts,
         });
     }
@@ -422,8 +434,11 @@ pub fn parse_line(line: &str) -> Option<ParsedEvent> {
                 attacker_eos: String::new(),
                 attacker_steam64: String::new(),
                 victim_name,
+                victim_eos: String::new(),
+                victim_steam64: String::new(),
                 damage: 0.0,
                 weapon: "TeamKill".to_string(),
+                event_type: "wound".to_string(),
                 is_kill: true,
                 is_teamkill: true,
                 logged_at: ts,
@@ -545,10 +560,10 @@ pub fn parse_line(line: &str) -> Option<ParsedEvent> {
     // 16. 玩家死亡
     if line.contains("Die():") && line.contains("KillingDamage=") {
         let player_name = line.split("Player: ").nth(1).and_then(|s| s.split("KillingDamage=").next()).map(|s| s.trim().to_string()).unwrap_or_default();
-        let (_, steam) = extract_online_ids(line);
+        let (killer_eos, killer_steam) = extract_online_ids(line);
         let weapon = line.split("caused by ").last().map(|s| s.split('_').next().unwrap_or(s).trim().to_string()).unwrap_or_default();
-        let killer_steam = extract_online_ids(line).1;
-        return Some(ParsedEvent::PlayerDeath { player_name, steam64: steam, killer_steam64: killer_steam, weapon, logged_at: ts });
+        let damage = extract_float_after(line, "KillingDamage=");
+        return Some(ParsedEvent::PlayerDeath { player_name, steam64: String::new(), killer_steam64: killer_steam, killer_eos, weapon, damage, logged_at: ts });
     }
 
     // 17. 爆炸事件坐标
