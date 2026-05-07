@@ -55,6 +55,10 @@ export default function ControlPanelPage() {
     const [serverInfo, setServerInfo] = useState<ServerInfoLocal | null>(null);
     const [broadcastMsg, setBroadcastMsg] = useState('');
     const [rightTab, setRightTab] = useState<'control' | 'chat' | 'logs'>('control');
+    const [banTarget, setBanTarget] = useState<any>(null);
+    const [banDuration, setBanDuration] = useState(60);
+    const [banReason, setBanReason] = useState('');
+    const [slomoValue, setSlomoValue] = useState(1);
 
     useEffect(() => {
         if (servers.length > 0 && !selectedServer) setSelectedServer(servers[0]);
@@ -254,16 +258,26 @@ export default function ControlPanelPage() {
         if (!cmd) setRconCommand('');
     }, [selectedServer, rconCommand]);
 
-    const execPlayerAction = useCallback(async (playerName: string, action: string, msg?: string) => {
+    const execPlayerAction = useCallback(async (playerName: string, action: string, msg?: string, playerId?: number, duration?: number) => {
         if (!selectedServer) return;
         try {
-            const res = await api(`/servers/${selectedServer.id}/player-action`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ player_name: playerName, action, message: msg || '', admin_user: 'Admin' }) });
+            const body: any = { player_name: playerName, action, message: msg || '', admin_user: 'Admin' };
+            if (playerId !== undefined) body.player_id = playerId;
+            if (duration !== undefined) body.duration = duration;
+            const res = await api(`/servers/${selectedServer.id}/player-action`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
             const data = await res.json();
             setActionMsg(data.error ? `失败: ${data.error}` : `${action} ${playerName} 成功`);
             setTimeout(() => setActionMsg(''), 3000);
             fetchServerState();
         } catch { setActionMsg('请求失败'); }
     }, [selectedServer, fetchServerState]);
+
+    const handleBan = useCallback(async () => {
+        if (!banTarget) return;
+        await execPlayerAction(banTarget.name, 'ban', banReason || '管理员封禁', banTarget.player_id, banDuration);
+        setBanTarget(null);
+        setBanReason('');
+    }, [banTarget, banReason, banDuration, execPlayerAction]);
 
     const execDisbandSquad = useCallback(async (teamId: number, squadId: string) => {
         if (!selectedServer) return;
@@ -337,11 +351,13 @@ export default function ControlPanelPage() {
                     rconResult={rconResult}
                     broadcastMsg={broadcastMsg}
                     warmupToggles={warmupToggles}
+                    slomoValue={slomoValue}
                     onRconCommandChange={setRconCommand}
                     onSendRcon={sendRcon}
                     onDeleteServer={handleDeleteClick}
                     onBroadcastMsgChange={setBroadcastMsg}
                     onSendBroadcast={sendBroadcast}
+                    onSlomoChange={setSlomoValue}
                     onWarmupToggle={(key: string, v: boolean) => {
                         const item = [
                             { key: 'novehicleclaim', cmd: 'AdminDisableVehicleClaiming' },
@@ -373,7 +389,7 @@ export default function ControlPanelPage() {
                             <div>
                                 {/* 玩家列表 — 双方阵营左右排列 */}
                                 {serverState ? (
-                                    <div style={{ display: 'flex', maxHeight: 460 }}>
+                                    <div style={{ display: 'flex' }}>
                                         {(() => {
                                             const teams = serverState.teams?.length > 0
                                                 ? serverState.teams
@@ -423,6 +439,7 @@ export default function ControlPanelPage() {
                                                                                     squad={sq}
                                                                                     members={members}
                                                                                     onAction={execPlayerAction}
+                                                                                    onBan={setBanTarget}
                                                                                     onDisband={() => { if (confirm(`解散 ${sq.name}?`)) execDisbandSquad(teamId, sq.squad_id); }}
                                                                                     adminSteamIds={serverState.admin_steam_ids}
                                                                                 />
@@ -434,6 +451,7 @@ export default function ControlPanelPage() {
                                                                                 squad={{ name: `小队 ${sid}`, creator: '—', squad_id: sid }}
                                                                                 members={sp(sid)}
                                                                                 onAction={execPlayerAction}
+                                                                                onBan={setBanTarget}
                                                                                 onDisband={() => { if (confirm(`解散 小队 ${sid}?`)) execDisbandSquad(teamId, sid); }}
                                                                                 adminSteamIds={serverState.admin_steam_ids}
                                                                             />
@@ -443,6 +461,7 @@ export default function ControlPanelPage() {
                                                                                 squad={{ name: '未入队', creator: '', squad_id: null }}
                                                                                 members={us}
                                                                                 onAction={execPlayerAction}
+                                                                                onBan={setBanTarget}
                                                                                 onDisband={null}
                                                                                 adminSteamIds={serverState.admin_steam_ids}
                                                                                 collapsed={false}
@@ -468,6 +487,58 @@ export default function ControlPanelPage() {
                     </div>
                 </div>
             </div>
+
+            {/* ═══ 封禁对话框 ═══ */}
+            {banTarget && (
+                <Modal onClose={() => { setBanTarget(null); setBanReason(''); }}>
+                    <h3 style={{ marginBottom: 16, fontSize: 16 }}>⛔ 封禁玩家</h3>
+                    <div style={{ marginBottom: 12 }}>
+                        <span style={{ color: 'var(--text3)', fontSize: 12 }}>玩家：</span>
+                        <strong style={{ fontSize: 14 }}>{banTarget.name}</strong>
+                        <span style={{ color: 'var(--text3)', fontSize: 11, marginLeft: 8, fontFamily: 'monospace' }}>ID: {banTarget.player_id}</span>
+                    </div>
+                    <div style={{ marginBottom: 14 }}>
+                        <span style={{ color: 'var(--text3)', fontSize: 12, display: 'block', marginBottom: 6 }}>封禁时长：</span>
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                            {[
+                                { label: '1小时', val: 60 },
+                                { label: '6小时', val: 360 },
+                                { label: '1天', val: 1440 },
+                                { label: '3天', val: 4320 },
+                                { label: '7天', val: 10080 },
+                                { label: '永久', val: 0 },
+                            ].map(opt => (
+                                <button
+                                    key={opt.val}
+                                    onClick={() => setBanDuration(opt.val)}
+                                    style={{
+                                        padding: '6px 14px', fontSize: 12, borderRadius: 6, cursor: 'pointer', border: '1px solid',
+                                        background: banDuration === opt.val ? 'var(--red)' : 'transparent',
+                                        color: banDuration === opt.val ? '#fff' : 'var(--text2)',
+                                        borderColor: banDuration === opt.val ? 'var(--red)' : 'var(--border)',
+                                        fontWeight: banDuration === opt.val ? 600 : 400,
+                                    }}
+                                >{opt.label}</button>
+                            ))}
+                        </div>
+                    </div>
+                    <div style={{ marginBottom: 16 }}>
+                        <span style={{ color: 'var(--text3)', fontSize: 12, display: 'block', marginBottom: 6 }}>封禁原因：</span>
+                        <input
+                            className="rcon-input"
+                            placeholder="输入封禁原因（选填）"
+                            value={banReason}
+                            onChange={e => setBanReason(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter') handleBan(); }}
+                            autoFocus
+                        />
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                        <button onClick={() => { setBanTarget(null); setBanReason(''); }} style={{ padding: '8px 18px', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text2)', cursor: 'pointer', fontSize: 12 }}>取消</button>
+                        <button onClick={handleBan} style={{ padding: '8px 18px', background: 'var(--red)', border: 'none', borderRadius: 6, color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>确认封禁</button>
+                    </div>
+                </Modal>
+            )}
 
             {/* ═══ 删除确认 Modal ═══ */}
             {deleteTarget && (

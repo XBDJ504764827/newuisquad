@@ -3,17 +3,15 @@
 import { useState, useEffect, useCallback } from 'react';
 
 import { api } from '../../lib/api';
-import { TkSettingsTab } from './ConfigPanel/TkSettingsTab';
-import { DamageNotifyTab } from './ConfigPanel/DamageNotifyTab';
+import { DamageFfNotifyTab } from './ConfigPanel/DamageFfNotifyTab';
 
 const configTabs = [
-  { id: 'tab-1', label: '误杀设置' },
-  { id: 'tab-3', label: '挂机设置' },
-  { id: 'tab-4', label: '代码跳边设置' },
-  { id: 'tab-5', label: '广播设置' },
-  { id: 'tab-6', label: '队伍设置' },
-  { id: 'tab-7', label: '伤害通知' },
-  { id: 'tab-8', label: '异常伤害' },
+  { id: 'tab-1', label: '伤害与误伤通知' },
+  { id: 'tab-2', label: '挂机设置' },
+  { id: 'tab-3', label: '代码跳边设置' },
+  { id: 'tab-4', label: '广播设置' },
+  { id: 'tab-5', label: '队伍设置' },
+  { id: 'tab-7', label: '异常伤害' },
 ];
 
 interface AfkSettings {
@@ -120,12 +118,6 @@ export default function ConfigPanelPage() {
         setTkLoading(false);
       })
       .catch(() => setTkLoading(false));
-    // 加载 AFK 设置
-    setAfkLoading(true);
-    api(`/servers/${selectedServerId}/afk-settings`)
-      .then(r => r.json())
-      .then(data => { setAfkForm({ enabled: data.enabled, min_players_to_check: data.min_players_to_check, max_afk_minutes: data.max_afk_minutes }); setAfkLoading(false); })
-      .catch(() => setAfkLoading(false));
     // 加载广播设置
     setBcLoading(true);
     api(`/servers/${selectedServerId}/broadcast-settings`)
@@ -202,6 +194,11 @@ export default function ConfigPanelPage() {
     const data = await res.json(); setDamageNotifySaving(false);
     if (data.error) setDamageNotifyError(data.error); else showSuccess('伤害通知设置已保存');
   }, [selectedServerId, damageNotifyForm]);
+
+  const saveAllDamageFf = useCallback(async () => {
+    await saveTkSettings();
+    await saveDamageNotifySettings();
+  }, [saveTkSettings, saveDamageNotifySettings]);
 
   const saveAbDamageConfig = useCallback(async () => {
     if (!selectedServerId) return; setAbDamageSaving(true); setAbDamageError('');
@@ -308,45 +305,30 @@ export default function ConfigPanelPage() {
         </div>
 
         {activeTab === 'tab-1' && (
-          <TkSettingsTab
+          <DamageFfNotifyTab
             selectedServerId={selectedServerId}
             tkLoading={tkLoading}
+            damageNotifyLoading={damageNotifyLoading}
             tkForm={tkForm}
+            damageNotifyForm={damageNotifyForm}
             tkError={tkError}
+            damageNotifyError={damageNotifyError}
             tkSaving={tkSaving}
+            damageNotifySaving={damageNotifySaving}
             onTkFormChange={setTkForm}
-            onSave={saveTkSettings}
+            onDamageNotifyFormChange={setDamageNotifyForm}
+            onSaveTk={saveTkSettings}
+            onSaveDamageNotify={saveDamageNotifySettings}
+            onSaveAll={saveAllDamageFf}
           />
         )}
 
         {activeTab === 'tab-2' && (
           <div className="tab-content" style={{ display: 'block' }}>
             <h4 style={{ marginBottom: 20 }}>挂机设置 (AFK)</h4>
-            {!selectedServerId ? <p style={{ color: 'var(--text3)', fontSize: 12 }}>请先添加游戏服务器。</p>
-            : afkLoading ? <p style={{ color: 'var(--text3)', fontSize: 12 }}>加载中...</p> : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 20, maxWidth: 500 }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}>
-                  <input type="checkbox" checked={afkForm.enabled} onChange={e => setAfkForm({...afkForm, enabled: e.target.checked})} />
-                  <div><div style={{ fontWeight: 500 }}>开启挂机检测</div><div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>开启后，当服务器人数达到指定数量时启动检测</div></div>
-                </label>
-                <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16 }}>
-                  <label style={{ fontSize: 12, color: 'var(--text2)', display: 'block', marginBottom: 6 }}>启动检测人数</label>
-                  <input className="rcon-input" type="number" min={1} max={100} style={{ width: 100 }} value={afkForm.min_players_to_check}
-                    onChange={e => setAfkForm({...afkForm, min_players_to_check: parseInt(e.target.value) || 0})} />
-                  <p style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>服务器人数达到此数量后开始挂机检测</p>
-                </div>
-                <div>
-                  <label style={{ fontSize: 12, color: 'var(--text2)', display: 'block', marginBottom: 6 }}>最大挂机时长（分钟）</label>
-                  <input className="rcon-input" type="number" min={1} max={120} style={{ width: 100 }} value={afkForm.max_afk_minutes}
-                    onChange={e => setAfkForm({...afkForm, max_afk_minutes: parseInt(e.target.value) || 0})} />
-                  <p style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>玩家持续挂机超过此时长将被踢出服务器</p>
-                </div>
-                {afkError && <div style={{ color: 'var(--red)', fontSize: 12 }}>{afkError}</div>}
-                <button className="rcon-btn" style={{ width: 'auto', padding: '10px 24px' }} onClick={saveAfkSettings} disabled={afkSaving}>
-                  {afkSaving ? '保存中...' : '保存设置'}
-                </button>
-              </div>
-            )}
+            <div style={{ padding: '60px 0', textAlign: 'center', color: 'var(--text3)', fontSize: 14 }}>
+              功能待开发
+            </div>
           </div>
         )}
         {activeTab === 'tab-3' && (
@@ -413,7 +395,7 @@ export default function ConfigPanelPage() {
                     <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
                       <span style={{ flex: 1, fontSize: 13 }}>{a.content}</span>
                       <span className="badge gray" style={{ fontSize: 10 }}>每{a.interval_minutes}{a.interval_minutes === 0 ? '(连续)' : '分钟'}</span>
-                      <span className="badge red" style={{ cursor: 'pointer', fontSize: 10 }} onClick={() => delAnnouncement(a.id)}>删除</span>
+                      <span className="badge red" style={{ cursor: 'pointer', fontSize: 10 }} onClick={() => { if (confirm('确认删除此通告？')) delAnnouncement(a.id); }}>删除</span>
                     </div>
                   ))}
                   <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
@@ -433,7 +415,7 @@ export default function ConfigPanelPage() {
                     <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
                       <span className="badge blue" style={{ fontSize: 10 }}>{r.keyword}</span>
                       <span style={{ flex: 1, fontSize: 13 }}>{r.reply_message}</span>
-                      <span className="badge red" style={{ cursor: 'pointer', fontSize: 10 }} onClick={() => delAutoReply(r.id)}>删除</span>
+                      <span className="badge red" style={{ cursor: 'pointer', fontSize: 10 }} onClick={() => { if (confirm('确认删除此自动回复规则？')) delAutoReply(r.id); }}>删除</span>
                     </div>
                   ))}
                   <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
@@ -497,17 +479,6 @@ export default function ConfigPanelPage() {
             )}
           </div>
         )}
-        {activeTab === 'tab-6' && (
-          <DamageNotifyTab
-            selectedServerId={selectedServerId}
-            damageNotifyLoading={damageNotifyLoading}
-            damageNotifyForm={damageNotifyForm}
-            damageNotifyError={damageNotifyError}
-            damageNotifySaving={damageNotifySaving}
-            onFormChange={setDamageNotifyForm}
-            onSave={saveDamageNotifySettings}
-          />
-        )}
         {activeTab === 'tab-7' && (
           <div className="tab-content" style={{ display: 'block' }}>
             <h4 style={{ marginBottom: 20 }}>异常伤害</h4>
@@ -533,7 +504,7 @@ export default function ConfigPanelPage() {
                   {abDamageRules.map(r => (
                     <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
                       <span style={{ flex: 1, fontSize: 13 }}>最高伤害值：<strong>{r.max_damage}</strong></span>
-                      <span className="badge red" style={{ cursor: 'pointer', fontSize: 10 }} onClick={() => delAbDamageRule(r.id)}>删除</span>
+                      <span className="badge red" style={{ cursor: 'pointer', fontSize: 10 }} onClick={() => { if (confirm('确认删除此伤害阈值规则？')) delAbDamageRule(r.id); }}>删除</span>
                     </div>
                   ))}
                   <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>

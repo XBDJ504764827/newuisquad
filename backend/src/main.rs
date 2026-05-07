@@ -22,13 +22,13 @@ async fn main() -> anyhow::Result<()> {
     let pool = db::create_pool(&config.database_url).await?;
     sqlx::migrate!("./migrations").run(&pool).await?;
     tracing::info!("数据库迁移完成");
+    services::system_log::backend_info(&pool, "main", "数据库迁移完成，后端启动中").await;
 
     // Agent 连接池（生产环境日志来源）
     let agent_pool = api::agent_ws::AgentPool::new();
     let log_tx = agent_pool.log_tx();
     let log_rx1 = log_tx.subscribe();
     let log_rx2 = log_tx.subscribe();
-    let log_rx3 = log_tx.subscribe();
 
     // 初始化默认管理员
     init_admin(&pool, &config).await?;
@@ -48,12 +48,12 @@ async fn main() -> anyhow::Result<()> {
         rate_limiter: api::rate_limiter::RateLimiterState::new(),
     };
 
-    // 启动误杀检测服务（保存 JoinHandle 用于优雅关闭）
-    let tk_handle = services::tk_service::start_tk_monitor(pool.clone(), log_rx1);
     // 启动广播处理服务
-    let bc_handle = services::broadcast_handler::start_broadcast_handler(pool.clone(), log_rx2);
-    // 启动伤害/TK通知服务
-    let dn_handle = services::damage_notify_service::start_damage_notify(pool, log_rx3);
+    let bc_handle = services::broadcast_handler::start_broadcast_handler(pool.clone(), log_rx1);
+    // 启动统一伤害与误伤通知服务
+    let server_states_dn = state.server_states.clone();
+    let dn_handle = services::damage_notify_service::start_damage_notify(pool.clone(), log_rx2, server_states_dn);
+    let log_pool = pool;
 
     let cors = if config.allowed_origin == "*" {
         CorsLayer::new()
@@ -72,6 +72,7 @@ async fn main() -> anyhow::Result<()> {
     let addr: SocketAddr = format!("{}:{}", config.server_host, config.server_port).parse()?;
 
     tracing::info!("服务器监听: {}", addr);
+    services::system_log::backend_info(&log_pool, "main", &format!("后端服务已启动，监听 {}", addr)).await;
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
     // 优雅关闭：捕获 SIGTERM/Ctrl+C，等待后台任务完成
@@ -92,10 +93,11 @@ async fn main() -> anyhow::Result<()> {
     let _ = tokio::time::timeout(
         std::time::Duration::from_secs(10),
         async {
-            let _ = tokio::join!(tk_handle, bc_handle, dn_handle);
+            let _ = tokio::join!(bc_handle, dn_handle);
         }
     ).await;
     tracing::info!("服务已关闭");
+    services::system_log::backend_info(&log_pool, "main", "后端服务已关闭").await;
 
     Ok(())
 }

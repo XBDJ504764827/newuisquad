@@ -3,12 +3,10 @@
 import { InfoRow } from './InfoRow';
 
 const QUICK_COMMANDS = [
-  { label: '列出玩家', cmd: 'ListPlayers', icon: '👥' },
-  { label: '列出小队', cmd: 'ListSquads', icon: '🛡️' },
-  { label: '下张地图', cmd: 'ShowNextMap', icon: '🗺️' },
-  { label: '服务器信息', cmd: 'ShowServerInfo', icon: '📊' },
-  { label: '结束对局', cmd: 'AdminEndMatch', icon: '🏁' },
-  { label: '换图确认', cmd: 'AdminSlomo 1', icon: '⏱️' },
+  { label: '立即结束当前对局', cmd: 'AdminEndMatch', icon: '🏁' },
+  { label: '立即暂停当前对局', cmd: 'AdminPauseMatch', icon: '⏸️' },
+  { label: '继续当前对局', cmd: 'AdminUnpauseMatch', icon: '▶️' },
+  { label: '重新开始当前对局', cmd: 'AdminRestartMatch', icon: '🔄' },
 ];
 
 const WARMUP_ITEMS = [
@@ -27,18 +25,20 @@ interface LeftSidePanelProps {
   rconResult: string;
   broadcastMsg: string;
   warmupToggles: Record<string, boolean | null>;
+  slomoValue: number;
   onRconCommandChange: (v: string) => void;
   onSendRcon: (cmd?: string) => void;
   onDeleteServer: (s: any) => void;
   onBroadcastMsgChange: (v: string) => void;
   onSendBroadcast: () => void;
   onWarmupToggle: (key: string, value: boolean) => void;
+  onSlomoChange: (v: number) => void;
 }
 
 export function LeftSidePanel({
-  selectedServer, rconCommand, rconResult, broadcastMsg, warmupToggles,
+  selectedServer, rconCommand, rconResult, broadcastMsg, warmupToggles, slomoValue,
   onRconCommandChange, onSendRcon, onDeleteServer,
-  onBroadcastMsgChange, onSendBroadcast, onWarmupToggle,
+  onBroadcastMsgChange, onSendBroadcast, onWarmupToggle, onSlomoChange,
 }: LeftSidePanelProps) {
   if (!selectedServer) return null;
 
@@ -95,7 +95,7 @@ export function LeftSidePanel({
         </div>
         <div className="card-body" style={{ padding: '8px 14px', display: 'flex', flexDirection: 'column', gap: 4 }}>
           {QUICK_COMMANDS.map(qc => (
-            <button key={qc.cmd} onClick={() => onSendRcon(qc.cmd)}
+            <button key={qc.cmd} onClick={() => { if (confirm(`确认执行「${qc.label}」？`)) onSendRcon(qc.cmd); }}
               style={{
                 width: '100%', padding: '7px 12px', border: '1px solid var(--border)',
                 borderRadius: 6, background: 'var(--bg3)', color: 'var(--text2)',
@@ -144,6 +144,45 @@ export function LeftSidePanel({
               </div>
             );
           })}
+
+          {/* 服务器时间倍数 */}
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 10, marginTop: 4 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--text2)' }}>⏱️ 时间倍数</span>
+              <span style={{ fontSize: 12, fontWeight: 700, color: slomoValue !== 1 ? '#f59e0b' : 'var(--text2)', fontFamily: 'monospace' }}>{slomoValue}x</span>
+            </div>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <input
+                type="range"
+                min={0} max={20} step={0.1}
+                value={slomoValue}
+                onChange={e => onSlomoChange(parseFloat(e.target.value))}
+                style={{ flex: 1, accentColor: 'var(--blue)', height: 4 }}
+              />
+              <input
+                type="number"
+                min={0} max={20} step={0.1}
+                value={slomoValue}
+                onChange={e => { const v = parseFloat(e.target.value); if (!isNaN(v) && v >= 0 && v <= 20) onSlomoChange(v); }}
+                style={{
+                  width: 52, padding: '3px 6px', fontSize: 11, textAlign: 'center',
+                  background: 'var(--bg2)', border: '1px solid var(--border)',
+                  borderRadius: 4, color: 'var(--text)', fontFamily: 'monospace',
+                }}
+              />
+              <button
+                onClick={() => onSendRcon(`AdminSlomo ${slomoValue}`)}
+                style={{
+                  padding: '4px 10px', borderRadius: 4, border: 'none', cursor: 'pointer',
+                  fontSize: 10, fontWeight: 600, background: 'var(--blue)', color: '#fff',
+                  whiteSpace: 'nowrap', transition: 'all .1s',
+                }}
+              >应用</button>
+            </div>
+            <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 4 }}>
+              0=暂停 1=正常 0-20可调
+            </div>
+          </div>
         </div>
       </div>
 

@@ -1,7 +1,7 @@
 use axum::{Json, extract::{State, Path}, http::StatusCode};
 use serde::Deserialize;
 use crate::api::AppState;
-use crate::services::rcon_server_info;
+use crate::services::{rcon_server_info, system_log};
 
 #[derive(Deserialize)]
 pub struct PlayerAction {
@@ -11,6 +11,10 @@ pub struct PlayerAction {
     pub message: String,
     #[serde(default)]
     pub admin_user: String,
+    #[serde(default)]
+    pub player_id: i32,
+    #[serde(default)]
+    pub duration: i32, // 封禁时长（分钟），0 表示永久
 }
 
 /// 获取 Ban 列表
@@ -170,18 +174,24 @@ pub async fn player_action(
         Err(e) => return Ok(Json(serde_json::json!({ "error": format!("RCON 连接失败: {}", e) }))),
     };
 
+    let pid = if req.player_id > 0 { req.player_id.to_string() } else { format!("\"{}\"", req.player_name) };
+
     let cmd = match req.action.as_str() {
-        "warn" => format!("AdminWarn \"{}\" \"{}\"", req.player_name, if req.message.is_empty() { "管理员警告" } else { &req.message }),
-        "kick" => format!("AdminKick \"{}\" \"{}\"", req.player_name, if req.message.is_empty() { "被管理员踢出" } else { &req.message }),
-        "ban" => format!("AdminBan \"{}\" \"{}\"", req.player_name, if req.message.is_empty() { "被管理员封禁" } else { &req.message }),
-        "team_change" => format!("AdminForceTeamChange \"{}\"", req.player_name),
-        "squad_remove" => format!("AdminRemoveFromSquad \"{}\"", req.player_name),
+        "warn" => format!("AdminWarn {} {}", pid, if req.message.is_empty() { "管理员警告" } else { &req.message }),
+        "kick" => format!("AdminKick {} {}", pid, if req.message.is_empty() { "被管理员踢出" } else { &req.message }),
+        "ban" => {
+            let reason = if req.message.is_empty() { "被管理员封禁" } else { &req.message };
+            format!("AdminBan {} {} {}", pid, req.duration, reason)
+        },
+        "team_change" => format!("AdminForceTeamChange {}", pid),
+        "squad_remove" => format!("AdminRemoveFromSquad {}", pid),
         _ => return Ok(Json(serde_json::json!({ "error": "未知操作" }))),
     };
 
     match rcon.execute(&cmd).await {
         Ok(resp) => {
             tracing::info!(server_id, admin = %req.admin_user, action = %req.action, target = %req.player_name, "玩家操作执行成功");
+            system_log::backend_info(&state.pool, "player_action", &format!("{} 对 {} 执行 {}", req.admin_user, req.player_name, req.action)).await;
             Ok(Json(serde_json::json!({ "success": true, "response": resp })))
         }
         Err(e) => Ok(Json(serde_json::json!({ "error": format!("执行失败: {}", e) }))),

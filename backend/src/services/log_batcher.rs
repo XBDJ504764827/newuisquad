@@ -63,39 +63,20 @@ async fn flush_batch(pool: &PgPool, batch: &mut Vec<(i32, LogEntry)>) {
     let entries = std::mem::take(batch);
     batch.clear();
 
-    // 构建批量 INSERT: INSERT INTO server_logs (...) VALUES ($1,$2,...), ($N,$N+1,...), ...
-    let mut query = String::from(
-        "INSERT INTO server_logs (server_id, log_level, category, message, raw_line, logged_at) VALUES ",
-    );
-    let mut params: Vec<String> = Vec::new();
-    for (i, (sid, entry)) in entries.iter().enumerate() {
-        if i > 0 {
-            query.push(',');
-        }
-        let base = i * 6;
-        query.push_str(&format!(
-            "(${},${},${},${},${},${})",
-            base + 1,
-            base + 2,
-            base + 3,
-            base + 4,
-            base + 5,
-            base + 6
-        ));
-        params.push(sid.to_string());
-        params.push(entry.log_level.clone());
-        params.push(entry.category.clone().unwrap_or_default());
-        params.push(entry.message.clone());
-        params.push(entry.raw_line.clone().unwrap_or_default());
-        params.push(entry.logged_at.to_rfc3339());
-    }
+    use sqlx::QueryBuilder;
+    let mut qb: QueryBuilder<'_, sqlx::Postgres> =
+        QueryBuilder::new("INSERT INTO server_logs (server_id, log_level, category, message, raw_line, logged_at) ");
 
-    // 使用原始 SQL 执行批量插入
-    let mut db_query = sqlx::query(&query);
-    for p in &params {
-        db_query = db_query.bind(p);
-    }
-    if let Err(e) = db_query.execute(pool).await {
+    qb.push_values(entries.iter(), |mut b, (sid, entry)| {
+        b.push_bind(*sid)
+            .push_bind(&entry.log_level)
+            .push_bind(entry.category.as_deref().unwrap_or(""))
+            .push_bind(&entry.message)
+            .push_bind(entry.raw_line.as_deref().unwrap_or(""))
+            .push_bind(entry.logged_at);
+    });
+
+    if let Err(e) = qb.build().execute(pool).await {
         tracing::error!(count = entries.len(), error = %e, "批量写入日志失败");
     } else {
         tracing::debug!(count = entries.len(), "批量写入日志成功");

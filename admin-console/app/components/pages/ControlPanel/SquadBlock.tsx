@@ -4,11 +4,12 @@ import { useState } from 'react';
 import { ActionBtn } from './ActionBtn';
 
 interface SquadBlockProps {
-  squad: any; members: any[]; onAction: (name: string, action: string, msg?: string) => void;
+  squad: any; members: any[]; onAction: (name: string, action: string, msg?: string, playerId?: number) => void;
+  onBan: (player: any) => void;
   onDisband: (() => void) | null; adminSteamIds?: string[]; collapsed?: boolean;
 }
 
-export function SquadBlock({ squad, members, onAction, onDisband, adminSteamIds, collapsed: forceCollapsed }: SquadBlockProps) {
+export function SquadBlock({ squad, members, onAction, onBan, onDisband, adminSteamIds, collapsed: forceCollapsed }: SquadBlockProps) {
   const [collapsed, setCollapsed] = useState(forceCollapsed ?? (members.length > 8));
   const leader = members.find((m: any) => m.is_leader);
 
@@ -47,6 +48,7 @@ export function SquadBlock({ squad, members, onAction, onDisband, adminSteamIds,
           <thead>
             <tr style={{ background: 'var(--bg2)' }}>
               <th style={{ padding: '5px 14px', color: 'var(--text3)', fontWeight: 500, textAlign: 'left', fontSize: 10 }}>玩家</th>
+              <th style={{ padding: '5px 6px', color: 'var(--text3)', fontWeight: 500, textAlign: 'left', fontSize: 10 }}>ID</th>
               <th style={{ padding: '5px 6px', color: 'var(--text3)', fontWeight: 500, textAlign: 'left', fontSize: 10 }}>职业</th>
               <th style={{ padding: '5px 14px', color: 'var(--text3)', fontWeight: 500, textAlign: 'right', fontSize: 10 }}>操作</th>
             </tr>
@@ -64,13 +66,14 @@ export function SquadBlock({ squad, members, onAction, onDisband, adminSteamIds,
                     {p.is_leader && <span style={{ color: '#f59e0b', fontSize: 9 }}>👑</span>}
                   </div>
                 </td>
+                <td style={{ padding: '5px 6px', color: 'var(--text2)', fontSize: 10, fontFamily: 'monospace' }}>{p.player_id}</td>
                 <td style={{ padding: '5px 6px', color: 'var(--text2)', fontSize: 10 }}>{p.role}</td>
                 <td style={{ padding: '5px 14px', textAlign: 'right' }}>
                   <div style={{ display: 'flex', gap: 3, justifyContent: 'flex-end' }}>
-                    <ActionBtn color="var(--text2)" bg="var(--bg4)" onClick={() => onAction(p.name, 'warn')}>警告</ActionBtn>
-                    <ActionBtn color="var(--red)" bg="rgba(239,68,68,0.08)" onClick={() => { if (confirm(`踢出 ${p.name}?`)) onAction(p.name, 'kick', '管理员操作'); }}>踢出</ActionBtn>
-                    <ActionBtn color="var(--red)" bg="rgba(239,68,68,0.12)" onClick={() => { if (confirm(`封禁 ${p.name}?`)) onAction(p.name, 'ban', '管理员操作'); }}>封禁</ActionBtn>
-                    <ActionBtn color="var(--blue)" bg="rgba(59,130,246,0.08)" onClick={() => { if (confirm(`强制 ${p.name} 跳边?`)) onAction(p.name, 'team_change'); }}>跳边</ActionBtn>
+                    <ActionBtn color="var(--text2)" bg="var(--bg4)" onClick={() => { if (confirm(`确认警告 ${p.name}？`)) onAction(p.name, 'warn', undefined, p.player_id); }}>警告</ActionBtn>
+                    <ActionBtn color="var(--red)" bg="rgba(239,68,68,0.08)" onClick={() => { if (confirm(`踢出 ${p.name}?`)) onAction(p.name, 'kick', '管理员操作', p.player_id); }}>踢出</ActionBtn>
+                    <ActionBtn color="var(--red)" bg="rgba(239,68,68,0.12)" onClick={() => onBan(p)}>封禁</ActionBtn>
+                    <ActionBtn color="var(--blue)" bg="rgba(59,130,246,0.08)" onClick={() => { if (confirm(`强制 ${p.name} 跳边?`)) onAction(p.name, 'team_change', undefined, p.player_id); }}>跳边</ActionBtn>
                   </div>
                 </td>
               </tr>
