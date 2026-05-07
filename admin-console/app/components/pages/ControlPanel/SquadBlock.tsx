@@ -7,6 +7,7 @@ import { ConfirmModal } from './ConfirmModal';
 interface SquadBlockProps {
   squad: any; members: any[]; onAction: (name: string, action: string, msg?: string, playerId?: number) => void;
   onBan: (player: any) => void;
+  onRemoveFromSquad: ((player: any) => void) | null;
   onDisband: (() => void) | null; adminSteamIds?: string[]; collapsed?: boolean;
 }
 
@@ -18,7 +19,7 @@ interface ConfirmState {
   onConfirm: () => void;
 }
 
-export function SquadBlock({ squad, members, onAction, onBan, onDisband, adminSteamIds, collapsed: forceCollapsed }: SquadBlockProps) {
+export function SquadBlock({ squad, members, onAction, onBan, onRemoveFromSquad, onDisband, adminSteamIds, collapsed: forceCollapsed }: SquadBlockProps) {
   const [collapsed, setCollapsed] = useState(forceCollapsed ?? (members.length > 8));
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const leader = members.find((m: any) => m.is_leader);
@@ -100,6 +101,12 @@ export function SquadBlock({ squad, members, onAction, onBan, onDisband, adminSt
                       onConfirm: () => onAction(p.name, 'kick', '管理员操作', p.player_id),
                     })}>踢出</ActionBtn>
                     <ActionBtn color="var(--red)" bg="rgba(239,68,68,0.12)" onClick={() => onBan(p)}>封禁</ActionBtn>
+                    {onRemoveFromSquad && (
+                      <ActionBtn color="#f59e0b" bg="rgba(245,158,11,0.08)" onClick={() => setConfirm({
+                        title: '移出小队', message: `确认将 ${p.name} 移出当前小队？`, confirmLabel: '确认移出', danger: false,
+                        onConfirm: () => onRemoveFromSquad(p),
+                      })}>移出</ActionBtn>
+                    )}
                     <ActionBtn color="var(--blue)" bg="rgba(59,130,246,0.08)" onClick={() => setConfirm({
                       title: '强制跳边', message: `确认强制 ${p.name} 跳边到对方阵营？`, confirmLabel: '确认跳边', danger: false,
                       onConfirm: () => onAction(p.name, 'team_change', undefined, p.player_id),

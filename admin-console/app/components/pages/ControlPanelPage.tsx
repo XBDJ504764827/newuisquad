@@ -275,15 +275,43 @@ export default function ControlPanelPage() {
     }, [selectedServer, fetchServerState]);
 
     const handleBan = useCallback(async () => {
-        if (!banTarget) return;
-        await execPlayerAction(banTarget.name, 'ban', banReason || '管理员封禁', banTarget.player_id, banDuration);
+        if (!banTarget || !selectedServer) return;
+        try {
+            const res = await api(`/servers/${selectedServer.id}/ban-player`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    steam_id: banTarget.steam_id,
+                    reason: banReason || '管理员封禁',
+                    duration: banDuration === 0 ? 'perm' : String(banDuration),
+                    admin_user: 'Admin',
+                }),
+            });
+            const data = await res.json();
+            setActionMsg(data.error ? `封禁失败: ${data.error}` : `已封禁 ${banTarget.name}`);
+            setTimeout(() => setActionMsg(''), 3000);
+            fetchServerState();
+        } catch { setActionMsg('封禁请求失败'); }
         setBanTarget(null);
         setBanReason('');
-    }, [banTarget, banReason, banDuration, execPlayerAction]);
+    }, [banTarget, banReason, banDuration, selectedServer, fetchServerState]);
 
     const execDisbandSquad = useCallback(async (teamId: number, squadId: string) => {
         if (!selectedServer) return;
         try { await api(`/servers/${selectedServer.id}/disband-squad/${teamId}/${squadId}`, { method: 'DELETE' }); setActionMsg('小队已解散'); setTimeout(() => setActionMsg(''), 3000); fetchServerState(); } catch { setActionMsg('解散失败'); }
+    }, [selectedServer, fetchServerState]);
+
+    const execRemoveFromSquad = useCallback(async (player: any) => {
+        if (!selectedServer) return;
+        try {
+            const res = await api(`/servers/${selectedServer.id}/player-action`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ player_name: player.name, action: 'squad_remove', player_id: player.player_id, admin_user: 'Admin' }),
+            });
+            const data = await res.json();
+            setActionMsg(data.error ? `失败: ${data.error}` : `${player.name} 已移出小队`);
+            setTimeout(() => setActionMsg(''), 3000);
+            fetchServerState();
+        } catch { setActionMsg('请求失败'); }
     }, [selectedServer, fetchServerState]);
 
     const sendBroadcast = useCallback(async () => {
@@ -453,6 +481,7 @@ export default function ControlPanelPage() {
                                                                                     members={members}
                                                                                     onAction={execPlayerAction}
                                                                                     onBan={setBanTarget}
+                                                                                    onRemoveFromSquad={execRemoveFromSquad}
                                                                                     onDisband={() => setDisbandConfirm({ teamId, squadId: sq.squad_id, name: sq.name })}
                                                                                     adminSteamIds={serverState.admin_steam_ids}
                                                                                 />
@@ -465,6 +494,7 @@ export default function ControlPanelPage() {
                                                                                 members={sp(sid)}
                                                                                 onAction={execPlayerAction}
                                                                                 onBan={setBanTarget}
+                                                                                onRemoveFromSquad={execRemoveFromSquad}
                                                                                 onDisband={() => setDisbandConfirm({ teamId, squadId: sid, name: `小队 ${sid}` })}
                                                                                 adminSteamIds={serverState.admin_steam_ids}
                                                                             />
@@ -475,6 +505,7 @@ export default function ControlPanelPage() {
                                                                                 members={us}
                                                                                 onAction={execPlayerAction}
                                                                                 onBan={setBanTarget}
+                                                                                onRemoveFromSquad={null}
                                                                                 onDisband={null}
                                                                                 adminSteamIds={serverState.admin_steam_ids}
                                                                                 collapsed={false}

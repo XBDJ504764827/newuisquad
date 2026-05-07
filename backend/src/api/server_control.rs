@@ -184,7 +184,7 @@ pub async fn player_action(
             format!("AdminBan {} {} {}", pid, req.duration, reason)
         },
         "team_change" => format!("AdminForceTeamChange {}", pid),
-        "squad_remove" => format!("AdminRemoveFromSquad {}", pid),
+        "squad_remove" => format!("AdminRemovePlayerFromSquadById {}", pid),
         _ => return Ok(Json(serde_json::json!({ "error": "未知操作" }))),
     };
 
