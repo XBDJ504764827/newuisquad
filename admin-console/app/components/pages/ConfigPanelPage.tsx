@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 
 import { api } from '../../lib/api';
 import { DamageFfNotifyTab } from './ConfigPanel/DamageFfNotifyTab';
+import { ConfirmModal } from './ControlPanel/ConfirmModal';
 
 const configTabs = [
   { id: 'tab-1', label: '伤害与误伤通知' },
@@ -92,6 +93,7 @@ export default function ConfigPanelPage() {
   const [tsSaving, setTsSaving] = useState(false);
   const [tsEnabled, setTsEnabled] = useState(false);
 
+  const [deleteConfirm, setDeleteConfirm] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
   const [successMsg, setSuccessMsg] = useState('');
 
   const showSuccess = (msg: string) => { setSuccessMsg(msg); setTimeout(() => setSuccessMsg(''), 3000); };
@@ -295,6 +297,17 @@ export default function ConfigPanelPage() {
         </div>
       )}
 
+      {deleteConfirm && (
+        <ConfirmModal
+          title={deleteConfirm.title}
+          message={deleteConfirm.message}
+          confirmLabel="确认删除"
+          danger={true}
+          onConfirm={() => { deleteConfirm.onConfirm(); setDeleteConfirm(null); }}
+          onCancel={() => setDeleteConfirm(null)}
+        />
+      )}
+
       <div className="card">
         <div className="tabs-header">
           {configTabs.map((tab) => (
@@ -395,7 +408,7 @@ export default function ConfigPanelPage() {
                     <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
                       <span style={{ flex: 1, fontSize: 13 }}>{a.content}</span>
                       <span className="badge gray" style={{ fontSize: 10 }}>每{a.interval_minutes}{a.interval_minutes === 0 ? '(连续)' : '分钟'}</span>
-                      <span className="badge red" style={{ cursor: 'pointer', fontSize: 10 }} onClick={() => { if (confirm('确认删除此通告？')) delAnnouncement(a.id); }}>删除</span>
+                      <span className="badge red" style={{ cursor: 'pointer', fontSize: 10 }} onClick={() => setDeleteConfirm({ title: '删除通告', message: `确认删除此通告「${a.content}」？`, onConfirm: () => delAnnouncement(a.id) })}>删除</span>
                     </div>
                   ))}
                   <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
@@ -415,7 +428,7 @@ export default function ConfigPanelPage() {
                     <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
                       <span className="badge blue" style={{ fontSize: 10 }}>{r.keyword}</span>
                       <span style={{ flex: 1, fontSize: 13 }}>{r.reply_message}</span>
-                      <span className="badge red" style={{ cursor: 'pointer', fontSize: 10 }} onClick={() => { if (confirm('确认删除此自动回复规则？')) delAutoReply(r.id); }}>删除</span>
+                      <span className="badge red" style={{ cursor: 'pointer', fontSize: 10 }} onClick={() => setDeleteConfirm({ title: '删除自动回复', message: `确认删除自动回复规则「${r.keyword}」？`, onConfirm: () => delAutoReply(r.id) })}>删除</span>
                     </div>
                   ))}
                   <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
@@ -504,7 +517,7 @@ export default function ConfigPanelPage() {
                   {abDamageRules.map(r => (
                     <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
                       <span style={{ flex: 1, fontSize: 13 }}>最高伤害值：<strong>{r.max_damage}</strong></span>
-                      <span className="badge red" style={{ cursor: 'pointer', fontSize: 10 }} onClick={() => { if (confirm('确认删除此伤害阈值规则？')) delAbDamageRule(r.id); }}>删除</span>
+                      <span className="badge red" style={{ cursor: 'pointer', fontSize: 10 }} onClick={() => setDeleteConfirm({ title: '删除伤害阈值', message: `确认删除伤害阈值规则（最大值: ${r.max_damage}）？`, onConfirm: () => delAbDamageRule(r.id) })}>删除</span>
                     </div>
                   ))}
                   <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>

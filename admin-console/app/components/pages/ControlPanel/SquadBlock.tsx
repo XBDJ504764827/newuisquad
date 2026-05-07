@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { ActionBtn } from './ActionBtn';
+import { ConfirmModal } from './ConfirmModal';
 
 interface SquadBlockProps {
   squad: any; members: any[]; onAction: (name: string, action: string, msg?: string, playerId?: number) => void;
@@ -9,12 +10,32 @@ interface SquadBlockProps {
   onDisband: (() => void) | null; adminSteamIds?: string[]; collapsed?: boolean;
 }
 
+interface ConfirmState {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  danger: boolean;
+  onConfirm: () => void;
+}
+
 export function SquadBlock({ squad, members, onAction, onBan, onDisband, adminSteamIds, collapsed: forceCollapsed }: SquadBlockProps) {
   const [collapsed, setCollapsed] = useState(forceCollapsed ?? (members.length > 8));
+  const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const leader = members.find((m: any) => m.is_leader);
 
   return (
     <div style={{ borderBottom: '1px solid var(--border)' }}>
+      {confirm && (
+        <ConfirmModal
+          title={confirm.title}
+          message={confirm.message}
+          confirmLabel={confirm.confirmLabel}
+          danger={confirm.danger}
+          onConfirm={() => { confirm.onConfirm(); setConfirm(null); }}
+          onCancel={() => setConfirm(null)}
+        />
+      )}
+
       <div
         onClick={() => setCollapsed(!collapsed)}
         style={{
@@ -70,10 +91,19 @@ export function SquadBlock({ squad, members, onAction, onBan, onDisband, adminSt
                 <td style={{ padding: '5px 6px', color: 'var(--text2)', fontSize: 10 }}>{p.role}</td>
                 <td style={{ padding: '5px 14px', textAlign: 'right' }}>
                   <div style={{ display: 'flex', gap: 3, justifyContent: 'flex-end' }}>
-                    <ActionBtn color="var(--text2)" bg="var(--bg4)" onClick={() => { if (confirm(`确认警告 ${p.name}？`)) onAction(p.name, 'warn', undefined, p.player_id); }}>警告</ActionBtn>
-                    <ActionBtn color="var(--red)" bg="rgba(239,68,68,0.08)" onClick={() => { if (confirm(`踢出 ${p.name}?`)) onAction(p.name, 'kick', '管理员操作', p.player_id); }}>踢出</ActionBtn>
+                    <ActionBtn color="var(--text2)" bg="var(--bg4)" onClick={() => setConfirm({
+                      title: '警告玩家', message: `确认警告 ${p.name}？`, confirmLabel: '确认警告', danger: false,
+                      onConfirm: () => onAction(p.name, 'warn', undefined, p.player_id),
+                    })}>警告</ActionBtn>
+                    <ActionBtn color="var(--red)" bg="rgba(239,68,68,0.08)" onClick={() => setConfirm({
+                      title: '踢出玩家', message: `确认踢出 ${p.name}？该玩家可重新加入服务器。`, confirmLabel: '确认踢出', danger: true,
+                      onConfirm: () => onAction(p.name, 'kick', '管理员操作', p.player_id),
+                    })}>踢出</ActionBtn>
                     <ActionBtn color="var(--red)" bg="rgba(239,68,68,0.12)" onClick={() => onBan(p)}>封禁</ActionBtn>
-                    <ActionBtn color="var(--blue)" bg="rgba(59,130,246,0.08)" onClick={() => { if (confirm(`强制 ${p.name} 跳边?`)) onAction(p.name, 'team_change', undefined, p.player_id); }}>跳边</ActionBtn>
+                    <ActionBtn color="var(--blue)" bg="rgba(59,130,246,0.08)" onClick={() => setConfirm({
+                      title: '强制跳边', message: `确认强制 ${p.name} 跳边到对方阵营？`, confirmLabel: '确认跳边', danger: false,
+                      onConfirm: () => onAction(p.name, 'team_change', undefined, p.player_id),
+                    })}>跳边</ActionBtn>
                   </div>
                 </td>
               </tr>

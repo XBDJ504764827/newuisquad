@@ -1,6 +1,8 @@
 'use client';
 
+import { useState } from 'react';
 import { InfoRow } from './InfoRow';
+import { ConfirmModal } from './ConfirmModal';
 
 const QUICK_COMMANDS = [
   { label: '立即结束当前对局', cmd: 'AdminEndMatch', icon: '🏁' },
@@ -40,10 +42,21 @@ export function LeftSidePanel({
   onRconCommandChange, onSendRcon, onDeleteServer,
   onBroadcastMsgChange, onSendBroadcast, onWarmupToggle, onSlomoChange,
 }: LeftSidePanelProps) {
+  const [cmdConfirm, setCmdConfirm] = useState<string | null>(null);
   if (!selectedServer) return null;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {cmdConfirm && (
+        <ConfirmModal
+          title="执行快捷命令"
+          message={`确认执行「${cmdConfirm}」？此操作将立即生效。`}
+          confirmLabel="确认执行"
+          danger={true}
+          onConfirm={() => { onSendRcon(QUICK_COMMANDS.find(q => q.label === cmdConfirm)?.cmd); setCmdConfirm(null); }}
+          onCancel={() => setCmdConfirm(null)}
+        />
+      )}
       {/* 连接信息 */}
       <div className="card">
         <div className="card-header" style={{ padding: '10px 14px' }}>
@@ -95,7 +108,7 @@ export function LeftSidePanel({
         </div>
         <div className="card-body" style={{ padding: '8px 14px', display: 'flex', flexDirection: 'column', gap: 4 }}>
           {QUICK_COMMANDS.map(qc => (
-            <button key={qc.cmd} onClick={() => { if (confirm(`确认执行「${qc.label}」？`)) onSendRcon(qc.cmd); }}
+            <button key={qc.cmd} onClick={() => setCmdConfirm(qc.label)}
               style={{
                 width: '100%', padding: '7px 12px', border: '1px solid var(--border)',
                 borderRadius: 6, background: 'var(--bg3)', color: 'var(--text2)',

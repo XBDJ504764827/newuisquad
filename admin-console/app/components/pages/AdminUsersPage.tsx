@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 
 import { api } from '../../lib/api';
+import { ConfirmModal } from './ControlPanel/ConfirmModal';
 
 interface AdminUser {
   id: number;
@@ -20,6 +21,7 @@ export default function AdminUsersPage() {
   const [editing, setEditing] = useState<AdminUser | null>(null);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [deleteConfirm, setDeleteConfirm] = useState<{ id: number; username: string } | null>(null);
   const [form, setForm] = useState({
     username: '', password: '', role: '巡查员',
     steam_id64: '', notes: '',
@@ -94,6 +96,16 @@ export default function AdminUsersPage() {
       {success && (
         <div style={{ padding: '8px 16px', background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)', borderRadius: 'var(--radius)', color: '#22c55e', fontSize: 13, fontWeight: 500 }}>{success}</div>
       )}
+      {deleteConfirm && (
+        <ConfirmModal
+          title="删除账户"
+          message={`确认删除账户「${deleteConfirm.username}」？此操作不可撤销。`}
+          confirmLabel="确认删除"
+          danger={true}
+          onConfirm={() => { handleDelete(deleteConfirm.id); setDeleteConfirm(null); }}
+          onCancel={() => setDeleteConfirm(null)}
+        />
+      )}
       <div className="card">
         <div className="card-header">
           <div><div className="card-title">网站登录账户</div><div className="card-sub">管理网站登录账户，不含权限配置（权限请在用户权限设置中配置）</div></div>
@@ -123,7 +135,7 @@ export default function AdminUsersPage() {
                   <td>
                     <div style={{ display: 'flex', gap: 6 }}>
                       <span className="badge blue" style={{ cursor: 'pointer' }} onClick={() => openEdit(u)}>编辑</span>
-                      <span className="badge red" style={{ cursor: 'pointer' }} onClick={() => { if (confirm('确认删除?')) handleDelete(u.id); }}>删除</span>
+                      <span className="badge red" style={{ cursor: 'pointer' }} onClick={() => setDeleteConfirm({ id: u.id, username: u.username })}>删除</span>
                     </div>
                   </td>
                 </tr>

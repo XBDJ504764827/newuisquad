@@ -8,6 +8,7 @@ import type { ServerInfo as SvrInfo, ServerState, ServerInfoDisplay, PlayerState
 import { LeftSidePanel } from './ControlPanel/LeftSidePanel';
 import { SquadBlock } from './ControlPanel/SquadBlock';
 import { Modal } from './ControlPanel/Modal';
+import { ConfirmModal } from './ControlPanel/ConfirmModal';
 
 interface LogEntry { log_level: string; category: string | null; message: string; raw_line: string | null; logged_at: string; }
 interface ChatMsg { time: Date; player: string; message: string; channel: string; }
@@ -59,6 +60,7 @@ export default function ControlPanelPage() {
     const [banDuration, setBanDuration] = useState(60);
     const [banReason, setBanReason] = useState('');
     const [slomoValue, setSlomoValue] = useState(1);
+    const [disbandConfirm, setDisbandConfirm] = useState<{ teamId: number; squadId: string; name: string } | null>(null);
 
     useEffect(() => {
         if (servers.length > 0 && !selectedServer) setSelectedServer(servers[0]);
@@ -342,6 +344,17 @@ export default function ControlPanelPage() {
                 </div>
             )}
 
+            {disbandConfirm && (
+                <ConfirmModal
+                    title="解散小队"
+                    message={`确认解散「${disbandConfirm.name}」？该小队所有成员将变为未入队状态。`}
+                    confirmLabel="确认解散"
+                    danger={true}
+                    onConfirm={() => { execDisbandSquad(disbandConfirm.teamId, disbandConfirm.squadId); setDisbandConfirm(null); }}
+                    onCancel={() => setDisbandConfirm(null)}
+                />
+            )}
+
             {/* ═══ 主内容区 ═══ */}
             <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 16, alignItems: 'start' }}>
                 {/* ═══ 左侧面板 ═══ */}
@@ -440,7 +453,7 @@ export default function ControlPanelPage() {
                                                                                     members={members}
                                                                                     onAction={execPlayerAction}
                                                                                     onBan={setBanTarget}
-                                                                                    onDisband={() => { if (confirm(`解散 ${sq.name}?`)) execDisbandSquad(teamId, sq.squad_id); }}
+                                                                                    onDisband={() => setDisbandConfirm({ teamId, squadId: sq.squad_id, name: sq.name })}
                                                                                     adminSteamIds={serverState.admin_steam_ids}
                                                                                 />
                                                                             );
@@ -452,7 +465,7 @@ export default function ControlPanelPage() {
                                                                                 members={sp(sid)}
                                                                                 onAction={execPlayerAction}
                                                                                 onBan={setBanTarget}
-                                                                                onDisband={() => { if (confirm(`解散 小队 ${sid}?`)) execDisbandSquad(teamId, sid); }}
+                                                                                onDisband={() => setDisbandConfirm({ teamId, squadId: sid, name: `小队 ${sid}` })}
                                                                                 adminSteamIds={serverState.admin_steam_ids}
                                                                             />
                                                                         ))}
