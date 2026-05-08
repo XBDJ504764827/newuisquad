@@ -1,4 +1,4 @@
-use crate::rcon_client::squad::SquadRcon;
+use crate::rcon_client::pool::RconPool;
 
 pub struct PlayerInfo {
     pub name: String,
@@ -36,23 +36,20 @@ pub struct ServerState {
 }
 
 /// 执行 ListPlayers 并解析
-pub async fn list_players(ip: &str, port: u16, password: &str) -> Result<Vec<PlayerInfo>, String> {
-    let mut rcon = SquadRcon::connect(ip, port, password).await?;
-    let raw = rcon.execute("ListPlayers").await?;
+pub async fn list_players(pool: &RconPool, ip: &str, port: u16, password: &str) -> Result<Vec<PlayerInfo>, String> {
+    let raw = pool.execute(ip, port, password, "ListPlayers").await?;
     Ok(parse_list_players(&raw))
 }
 
 /// 执行 ListSquads 并解析
-pub async fn list_squads(ip: &str, port: u16, password: &str) -> Result<Vec<SquadInfo>, String> {
-    let mut rcon = SquadRcon::connect(ip, port, password).await?;
-    let raw = rcon.execute("ListSquads").await?;
+pub async fn list_squads(pool: &RconPool, ip: &str, port: u16, password: &str) -> Result<Vec<SquadInfo>, String> {
+    let raw = pool.execute(ip, port, password, "ListSquads").await?;
     Ok(parse_list_squads(&raw))
 }
 
 /// 获取当前地图
-pub async fn get_map(ip: &str, port: u16, password: &str) -> Result<(String, String), String> {
-    let mut rcon = SquadRcon::connect(ip, port, password).await?;
-    let raw = rcon.execute("ShowNextMap").await?;
+pub async fn get_map(pool: &RconPool, ip: &str, port: u16, password: &str) -> Result<(String, String), String> {
+    let raw = pool.execute(ip, port, password, "ShowNextMap").await?;
     Ok(parse_map(&raw))
 }
 
@@ -86,36 +83,32 @@ pub struct ServerInfo {
 }
 
 /// 获取 Ban 列表
-pub async fn get_bans(ip: &str, port: u16, password: &str) -> Result<Vec<BanEntry>, String> {
-    let mut rcon = SquadRcon::connect(ip, port, password).await?;
-    let raw = rcon.execute("AdminListBans").await?;
+pub async fn get_bans(pool: &RconPool, ip: &str, port: u16, password: &str) -> Result<Vec<BanEntry>, String> {
+    let raw = pool.execute(ip, port, password, "AdminListBans").await?;
     Ok(parse_ban_list(&raw))
 }
 
 /// 获取 Warn 列表
-pub async fn get_warns(ip: &str, port: u16, password: &str) -> Result<Vec<WarnEntry>, String> {
-    let mut rcon = SquadRcon::connect(ip, port, password).await?;
-    let raw = rcon.execute("AdminListWarns").await?;
+pub async fn get_warns(pool: &RconPool, ip: &str, port: u16, password: &str) -> Result<Vec<WarnEntry>, String> {
+    let raw = pool.execute(ip, port, password, "AdminListWarns").await?;
     Ok(parse_warn_list(&raw))
 }
 
 /// 获取服务器基本信息
-pub async fn get_server_info(ip: &str, port: u16, password: &str) -> Result<ServerInfo, String> {
-    let mut rcon = SquadRcon::connect(ip, port, password).await?;
-    let raw = rcon.execute("ShowServerInfo").await?;
-    let (next_map, next_layer) = get_map(ip, port, password).await.unwrap_or_default();
+pub async fn get_server_info(pool: &RconPool, ip: &str, port: u16, password: &str) -> Result<ServerInfo, String> {
+    let raw = pool.execute(ip, port, password, "ShowServerInfo").await?;
+    let (next_map, next_layer) = get_map(pool, ip, port, password).await.unwrap_or_default();
     Ok(parse_server_info(&raw, &next_map, &next_layer))
 }
 
 /// 获取完整服务器状态（含玩家、小队、阵营名称）
-pub async fn get_server_state(ip: &str, port: u16, password: &str) -> Result<ServerState, String> {
-    let players = list_players(ip, port, password).await.unwrap_or_default();
-    let squads = list_squads(ip, port, password).await.unwrap_or_default();
-    let (map_name, game_mode) = get_map(ip, port, password).await.unwrap_or_default();
+pub async fn get_server_state(pool: &RconPool, ip: &str, port: u16, password: &str) -> Result<ServerState, String> {
+    let players = list_players(pool, ip, port, password).await.unwrap_or_default();
+    let squads = list_squads(pool, ip, port, password).await.unwrap_or_default();
+    let (map_name, game_mode) = get_map(pool, ip, port, password).await.unwrap_or_default();
 
     // 从 ListSquads 原始响应中解析阵营名称
-    let mut rcon = SquadRcon::connect(ip, port, password).await?;
-    let squads_raw = rcon.execute("ListSquads").await.unwrap_or_default();
+    let squads_raw = pool.execute(ip, port, password, "ListSquads").await.unwrap_or_default();
     let teams = parse_team_names(&squads_raw, &players);
 
     Ok(ServerState { players, squads, teams, map_name, game_mode })

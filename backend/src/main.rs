@@ -36,6 +36,9 @@ async fn main() -> anyhow::Result<()> {
     // 初始化批量日志写入器
     let log_batcher = services::log_batcher::LogBatcher::new(pool.clone());
 
+    // 启动 RCON 连接池（每连接独立命令队列、优先级、健康检查、自动重连）
+    let rcon_pool = rcon_client::pool::RconPool::new();
+
     let state = api::AppState {
         pool: pool.clone(),
         log_broadcast: Some(Arc::new(log_tx)),
@@ -46,13 +49,15 @@ async fn main() -> anyhow::Result<()> {
         team_switch_cache: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         log_batcher,
         rate_limiter: api::rate_limiter::RateLimiterState::new(),
+        rcon_pool: rcon_pool.clone(),
     };
 
     // 启动广播处理服务
-    let bc_handle = services::broadcast_handler::start_broadcast_handler(pool.clone(), log_rx1);
+    let bc_handle = services::broadcast_handler::start_broadcast_handler(pool.clone(), log_rx1, rcon_pool.clone());
     // 启动统一伤害与误伤通知服务
     let server_states_dn = state.server_states.clone();
-    let dn_handle = services::damage_notify_service::start_damage_notify(pool.clone(), log_rx2, server_states_dn);
+    let dn_rcon_pool = rcon_pool.clone();
+    let dn_handle = services::damage_notify_service::start_damage_notify(pool.clone(), log_rx2, server_states_dn, dn_rcon_pool);
     let log_pool = pool;
 
     let cors = if config.allowed_origin == "*" {

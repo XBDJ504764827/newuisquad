@@ -2,7 +2,6 @@ use axum::{Json, extract::State, http::StatusCode};
 use serde::Deserialize;
 use sqlx::Row;
 use crate::api::AppState;
-use crate::rcon_client::squad::SquadRcon;
 
 #[derive(Deserialize)]
 pub struct CreateServerRequest {
@@ -20,13 +19,9 @@ pub async fn create(
     State(state): State<AppState>,
     Json(req): Json<CreateServerRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    // 1. RCON 验证
-    match SquadRcon::connect(&req.ip, req.rcon_port as u16, &req.rcon_password).await {
-        Ok(mut rcon) => {
-            if let Err(e) = rcon.execute("ping").await {
-                return Ok(Json(serde_json::json!({ "error": format!("RCON 命令测试失败: {}", e) })));
-            }
-        }
+    // 1. RCON 验证（首次连接验证后缓存到连接池）
+    match state.rcon_pool.execute(&req.ip, req.rcon_port as u16, &req.rcon_password, "ping").await {
+        Ok(_) => {}
         Err(e) => {
             return Ok(Json(serde_json::json!({ "error": format!("RCON 连接失败: {}", e) })));
         }

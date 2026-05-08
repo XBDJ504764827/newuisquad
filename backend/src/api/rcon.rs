@@ -8,7 +8,7 @@ pub async fn execute(
     Path(server_id): Path<i32>,
     Json(req): Json<ExecuteRconRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    match rcon_service::execute(&state.pool, server_id, &req).await {
+    match rcon_service::execute(&state, server_id, &req).await {
         Ok(log) => Ok(Json(serde_json::json!(log))),
         Err(e) => Ok(Json(serde_json::json!({ "error": e }))),
     }

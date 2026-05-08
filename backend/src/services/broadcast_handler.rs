@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use sqlx::PgPool;
 use tokio::time::{sleep, Duration};
 use crate::models::server_log::LogEntry;
-use crate::rcon_client::squad::SquadRcon;
+use crate::rcon_client::pool::RconPool;
 
 /// 从日志行解析玩家进入事件
 fn parse_player_join(line: &str) -> Option<(String, String)> {
@@ -70,11 +70,13 @@ fn parse_chat(line: &str) -> Option<(String, String, String)> {
 pub fn start_broadcast_handler(
     pool: PgPool,
     mut log_rx: tokio::sync::broadcast::Receiver<LogEntry>,
+    rcon_pool: RconPool,
 ) -> tokio::task::JoinHandle<()> {
     tracing::info!("广播处理服务已启动");
 
     // 定时通告循环
     let pool_for_timer = pool.clone();
+    let pool_for_timer_rcon = rcon_pool.clone();
     tokio::spawn(async move {
         let mut last_sent: HashMap<i32, chrono::DateTime<chrono::Utc>> = HashMap::new();
         loop {
@@ -94,7 +96,7 @@ pub fn start_broadcast_handler(
                     let elapsed = now - *entry;
                     if elapsed.num_minutes() >= *bc_interval as i64 {
                         let cmd = format!("AdminBroadcast \"{}\"", bc_content);
-                        if let Err(e) = send_rcon(&ip, *rcon_port as u16, &rcon_pass, &cmd).await {
+                        if let Err(e) = send_rcon(&pool_for_timer_rcon, &ip, *rcon_port as u16, &rcon_pass, &cmd).await {
                             tracing::error!(server_id = *sid, error = %e, "定时通告发送失败");
                         } else {
                             tracing::info!(server_id = *sid, "已发送定时通告");
@@ -125,7 +127,7 @@ pub fn start_broadcast_handler(
                     for (_id, content, interval) in &anns {
                         if *interval > 0 {
                             let cmd = format!("AdminBroadcast \"{}\"", content);
-                            let _ = send_rcon(&ip, *rcon_port as u16, &rcon_pass, &cmd).await;
+                            let _ = send_rcon(&pool_for_timer_rcon, &ip, *rcon_port as u16, &rcon_pass, &cmd).await;
                         }
                     }
                 }
@@ -136,6 +138,7 @@ pub fn start_broadcast_handler(
 
     // 主循环：处理日志事件（进入提醒、OP列表、自动回复）
     let runtime_pool = pool.clone();
+    let runtime_rcon = rcon_pool;
     tokio::spawn(async move {
         loop {
             match log_rx.recv().await {
@@ -159,7 +162,7 @@ pub fn start_broadcast_handler(
                         if let Some((player_name, _)) = parse_player_join(raw) {
                             let welcome = join_msg.replace("{player}", &player_name);
                             let cmd = format!("AdminBroadcast \"{}\"", welcome);
-                            match send_rcon(&ip, rcon_port as u16, &rcon_pass, &cmd).await {
+                            match send_rcon(&runtime_rcon, &ip, rcon_port as u16, &rcon_pass, &cmd).await {
                                 Ok(_) => tracing::info!(server_id, player = %player_name, "已发送欢迎消息"),
                                 Err(e) => tracing::error!(server_id, error = %e, "欢迎消息发送失败"),
                             }
@@ -190,7 +193,7 @@ pub fn start_broadcast_handler(
                                         let oplist = if list.is_empty() { "当前暂无在线管理员".to_string() } else { list.join(", ") };
                                         let reply = op_msg.replace("{oplist}", &oplist);
                                         let cmd = format!("AdminWarn \"{}\" \"{}\"", player_name, reply);
-                                        let _ = send_rcon(&ip, rcon_port as u16, &rcon_pass, &cmd).await;
+                                        let _ = send_rcon(&runtime_rcon, &ip, rcon_port as u16, &rcon_pass, &cmd).await;
                                         tracing::info!(server_id, player = %player_name, "已回复OP列表");
                                     }
                                     Err(_) => {}
@@ -206,7 +209,7 @@ pub fn start_broadcast_handler(
                             for (keyword, reply_message) in &replies {
                                 if lower_msg.contains(&keyword.to_lowercase()) {
                                     let cmd = format!("AdminBroadcast \"{}\"", reply_message);
-                                    let _ = send_rcon(&ip, rcon_port as u16, &rcon_pass, &cmd).await;
+                                    let _ = send_rcon(&runtime_rcon, &ip, rcon_port as u16, &rcon_pass, &cmd).await;
                                     tracing::info!(server_id, player = %player_name, keyword, "已自动回复（广播）");
                                     break;
                                 }
@@ -223,8 +226,7 @@ pub fn start_broadcast_handler(
     })
 }
 
-async fn send_rcon(ip: &str, port: u16, password: &str, command: &str) -> Result<(), String> {
-    let mut rcon = SquadRcon::connect(ip, port, password).await?;
-    rcon.execute(command).await?;
+async fn send_rcon(pool: &RconPool, ip: &str, port: u16, password: &str, command: &str) -> Result<(), String> {
+    pool.execute(ip, port, password, command).await?;
     Ok(())
 }

@@ -260,11 +260,12 @@ export default function ControlPanelPage() {
         if (!cmd) setRconCommand('');
     }, [selectedServer, rconCommand]);
 
-    const execPlayerAction = useCallback(async (playerName: string, action: string, msg?: string, playerId?: number, duration?: number) => {
+    const execPlayerAction = useCallback(async (playerName: string, action: string, msg?: string, playerId?: number, steamId?: string, duration?: number) => {
         if (!selectedServer) return;
         try {
             const body: any = { player_name: playerName, action, message: msg || '', admin_user: 'Admin' };
             if (playerId !== undefined) body.player_id = playerId;
+            if (steamId) body.steam_id = steamId;
             if (duration !== undefined) body.duration = duration;
             const res = await api(`/servers/${selectedServer.id}/player-action`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
             const data = await res.json();
@@ -277,13 +278,12 @@ export default function ControlPanelPage() {
     const handleBan = useCallback(async () => {
         if (!banTarget || !selectedServer) return;
         try {
-            const res = await api(`/servers/${selectedServer.id}/ban-player`, {
+            const res = await api(`/servers/${selectedServer.id}/ban-player?admin_user=Admin`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     steam_id: banTarget.steam_id,
-                    reason: banReason || '管理员封禁',
-                    duration: banDuration === 0 ? 'perm' : String(banDuration),
-                    admin_user: 'Admin',
+                    reason: `${banReason || '管理员封禁'}`,
+                    duration: banDuration,
                 }),
             });
             const data = await res.json();

@@ -50,6 +50,8 @@ pub struct AppState {
     // 批量日志写入器
     pub log_batcher: LogBatcher,
     pub rate_limiter: RateLimiterState,
+    // RCON 连接池
+    pub rcon_pool: crate::rcon_client::pool::RconPool,
 }
 
 pub fn build_router(state: AppState) -> Router {

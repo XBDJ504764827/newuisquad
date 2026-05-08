@@ -6,7 +6,7 @@ use tokio::time::{sleep, Duration, Instant};
 use crate::models::damage_notify_settings::{DamageNotifySettings, UpdateDamageNotifyRequest};
 use crate::models::server_log::LogEntry;
 use crate::repositories::damage_notify_repo;
-use crate::rcon_client::squad::SquadRcon;
+use crate::rcon_client::pool::RconPool;
 use crate::services::system_log;
 
 // ═══ API 层使用的 CRUD 函数 ═══
@@ -21,7 +21,7 @@ pub async fn update(pool: &PgPool, server_id: i32, req: UpdateDamageNotifyReques
 
 // ════════════════════════════════════════════
 //  统一伤害与误伤通知服务
-//  合并原 damage_notify_service + tk_service
+//  通过 server_states 缓存中的 team_id 判断敌友
 // ════════════════════════════════════════════
 
 /// 玩家误伤状态
@@ -93,7 +93,7 @@ impl TkTracker {
     }
 }
 
-/// 从 server_states 缓存中查找玩家的 PlayerID
+/// 从 server_states 缓存中查找玩家的 PlayerID（通过名称）
 fn find_player_id(
     server_states: &HashMap<String, serde_json::Value>,
     server_id: i32,
@@ -125,6 +125,35 @@ fn find_player_id_by_steam(
     None
 }
 
+/// 通过 server_states 缓存判断两名玩家是否同队
+/// 返回 Some(true) = 同队（友军），Some(false) = 不同队（敌方），None = 无法判断
+fn is_same_team(
+    server_states: &HashMap<String, serde_json::Value>,
+    server_id: i32,
+    attacker_steam64: &str,
+    attacker_name: &str,
+    victim_name: &str,
+) -> Option<bool> {
+    let state = server_states.get(&server_id.to_string())?;
+    let players = state.get("players")?.as_array()?;
+
+    // 查找攻击者 team_id：优先用 steam_id 匹配，回退到名称匹配
+    let attacker_team = players.iter().find(|p| {
+        if !attacker_steam64.is_empty() {
+            p.get("steam_id").and_then(|s| s.as_str()) == Some(attacker_steam64)
+        } else {
+            p.get("name").and_then(|s| s.as_str()) == Some(attacker_name)
+        }
+    })?.get("team_id")?.as_i64()?;
+
+    // 查找受害者 team_id
+    let victim_team = players.iter().find(|p| {
+        p.get("name").and_then(|s| s.as_str()) == Some(victim_name)
+    })?.get("team_id")?.as_i64()?;
+
+    Some(attacker_team == victim_team)
+}
+
 /// 从日志行解析聊天消息
 fn parse_chat(line: &str) -> Option<(String, String, String)> {
     if !line.contains("[Chat]") && !line.contains("Chat") { return None; }
@@ -153,6 +182,7 @@ pub fn start_damage_notify(
     pool: PgPool,
     mut log_rx: tokio::sync::broadcast::Receiver<LogEntry>,
     server_states: Arc<tokio::sync::RwLock<HashMap<String, serde_json::Value>>>,
+    rcon_pool: RconPool,
 ) -> tokio::task::JoinHandle<()> {
     let tracker = Arc::new(RwLock::new(TkTracker::new()));
 
@@ -172,36 +202,56 @@ pub fn start_damage_notify(
                         use crate::services::squad_log_parser::ParsedEvent;
                         if let ParsedEvent::KillEvent {
                             ref attacker_name, ref attacker_steam64,
-                            ref victim_name, damage, is_teamkill, ..
+                            ref victim_name, damage, ..
                         } = event {
                             let attacker = attacker_name.as_str();
                             let victim = victim_name.as_str();
                             if attacker.is_empty() || victim.is_empty() { continue; }
 
-                            // 读取服务器状态缓存获取 PlayerID
+                            // 1. 全局开关检查
+                            let global_enabled = match sqlx::query_as::<_, (bool,)>(
+                                "SELECT enabled FROM damage_notify_settings WHERE server_id = $1"
+                            ).bind(server_id).fetch_optional(&pool).await {
+                                Ok(Some((enabled,))) => enabled,
+                                _ => false,
+                            };
+                            if !global_enabled { continue; }
+
+                            // 2. 通过 server_states 缓存中的 team_id 判断敌友
                             let states = server_states.read().await;
+                            let same_team = is_same_team(&states, server_id, attacker_steam64, attacker, victim);
                             let attacker_pid = find_player_id(&states, server_id, attacker)
                                 .or_else(|| find_player_id_by_steam(&states, server_id, attacker_steam64));
+                            drop(states);
 
-                            if is_teamkill {
-                                handle_teamkill(
-                                    &pool, &tracker, server_id,
-                                    attacker, attacker_steam64, victim, damage,
-                                    attacker_pid,
-                                ).await;
-                            } else {
-                                handle_enemy_damage(
-                                    &pool, server_id,
-                                    attacker, victim, damage,
-                                    attacker_pid,
-                                ).await;
+                            match same_team {
+                                Some(true) => {
+                                    // 友方误伤
+                                    handle_teamkill(
+                                        &pool, &tracker, &server_states, server_id,
+                                        attacker, attacker_steam64, victim, damage,
+                                        attacker_pid, &rcon_pool,
+                                    ).await;
+                                }
+                                Some(false) => {
+                                    // 敌方伤害
+                                    handle_enemy_damage(
+                                        &pool, server_id,
+                                        attacker, victim, damage,
+                                        attacker_pid, &rcon_pool,
+                                    ).await;
+                                }
+                                None => {
+                                    // 无法判断队伍（玩家不在缓存中），跳过
+                                    tracing::debug!(server_id, attacker = %attacker, victim = %victim, "无法从缓存判断敌友，跳过伤害通知");
+                                }
                             }
                         }
                     }
 
                     // 检测道歉消息
                     if let Some((_player_name, steam_id, message)) = parse_chat(raw) {
-                        process_apology(&pool, &tracker, server_id, &steam_id, &message).await;
+                        process_apology(&pool, &tracker, server_id, &steam_id, &message, &rcon_pool).await;
                     }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
@@ -220,72 +270,73 @@ async fn handle_enemy_damage(
     pool: &PgPool, server_id: i32,
     attacker: &str, victim: &str, damage: f64,
     attacker_pid: Option<i32>,
+    rcon_pool: &RconPool,
 ) {
-    let settings = match sqlx::query_as::<_, (bool, bool)>(
-        "SELECT enabled, notify_damage FROM damage_notify_settings WHERE server_id = $1"
+    // 检查敌方伤害通知子开关
+    let notify_damage = match sqlx::query_as::<_, (bool,)>(
+        "SELECT notify_damage FROM damage_notify_settings WHERE server_id = $1"
     ).bind(server_id).fetch_optional(pool).await {
-        Ok(Some(s)) => s,
-        _ => return,
+        Ok(Some((nd,))) => nd,
+        _ => false,
     };
-    let (enabled, notify_damage) = settings;
-    if !enabled || !notify_damage { return; }
+    if !notify_damage { return; }
 
     let pid_str = attacker_pid.map(|id| id.to_string()).unwrap_or_else(|| attacker.to_string());
     let cmd = format!("AdminWarn {} 你对{}造成了{:.0}点伤害", pid_str, victim, damage);
-    send_rcon_cmd(pool, server_id, &cmd).await;
+    send_rcon_cmd(pool, server_id, &cmd, rcon_pool).await;
 }
 
 /// 处理友方误伤 — 每次伤害立即广播并启动道歉倒计时
 async fn handle_teamkill(
     pool: &PgPool,
     tracker: &Arc<RwLock<TkTracker>>,
+    server_states: &Arc<tokio::sync::RwLock<HashMap<String, serde_json::Value>>>,
     server_id: i32,
     attacker: &str,
     attacker_steam64: &str,
     victim: &str,
     damage: f64,
     attacker_pid: Option<i32>,
+    rcon_pool: &RconPool,
 ) {
-    // 查询 TK 设置
-    let tk_config = match sqlx::query_as::<_, (String, i32, String, i32, String, Option<String>)>(
-        "SELECT s.ip, s.rcon_port, s.rcon_password, tk.apology_time_minutes, tk.apology_keyword, tk.tk_broadcast_message \
-         FROM servers s JOIN tk_settings tk ON s.id = tk.server_id \
-         WHERE s.id = $1 AND tk.enabled = true"
+    // 查询 TK 设置（误伤子开关）
+    let tk_config = match sqlx::query_as::<_, (bool, i32, String)>(
+        "SELECT enabled, apology_time_minutes, apology_keyword \
+         FROM tk_settings WHERE server_id = $1"
     ).bind(server_id).fetch_optional(pool).await {
         Ok(Some(c)) => c,
         _ => return,
     };
-    let (ip, rcon_port, rcon_password, apology_minutes, apology_keyword, tk_broadcast_msg) = tk_config;
+    let (tk_enabled, apology_minutes, apology_keyword) = tk_config;
+    if !tk_enabled { return; }
 
     let pid_str = attacker_pid.map(|id| id.to_string()).unwrap_or_else(|| attacker.to_string());
 
-    // 1. AdminWarn 通知攻击者
-    let warn_cmd = format!("AdminWarn {} 你对队友{}造成了{:.0}点伤害", pid_str, victim, damage);
-    send_rcon_cmd_direct(&ip, rcon_port as u16, &rcon_password, &warn_cmd).await;
+    // 1. AdminBroadcast 黄字广播（按用户要求格式）
+    let broadcast_msg = format!(
+        "{}误伤了队友{}，请输入{}道歉否则将在{}分钟后被踢出",
+        attacker, victim, apology_keyword, apology_minutes
+    );
+    send_rcon_cmd(pool, server_id, &format!("AdminBroadcast {}", broadcast_msg), rcon_pool).await;
 
-    // 2. AdminBroadcast 黄字广播（含道歉关键字和道歉时间）
-    let broadcast_msg = tk_broadcast_msg.unwrap_or_else(|| {
-        format!("{}误伤了队友{}，输入{}道歉，否则将在{}分钟后被踢出",
-            attacker, victim, apology_keyword, apology_minutes)
-    });
-    send_rcon_broadcast(&ip, rcon_port as u16, &rcon_password, &broadcast_msg).await;
-
-    // 3. 更新 TK 计数并重置道歉状态，获取当前计时器代数
+    // 2. 更新 TK 计数并重置道歉状态，获取当前计时器代数
     let (tk_count, timer_gen) = {
         let mut t = tracker.write().await;
         t.record_tk(server_id, attacker_steam64)
     };
     tracing::info!(server_id, player = %attacker, tk_count, victim = %victim, damage, timer_gen, "误伤事件");
 
-    // 4. 启动/重置道歉倒计时（每次误伤都重新计时）
+    // 3. 启动/重置道歉倒计时（每次误伤都重新计时）
     let deadline = Instant::now() + Duration::from_secs((apology_minutes as u64) * 60);
     tracker.write().await.set_apology_deadline(server_id, attacker_steam64, deadline);
 
     let tracker_clone = tracker.clone();
+    let pool_clone = pool.clone();
+    let server_states_clone = server_states.clone();
     let attacker_id = attacker_steam64.to_string();
     let attacker_name = attacker.to_string();
-    let ip_copy = ip.clone();
-    let pass_copy = rcon_password.clone();
+    let apology_kw = apology_keyword.clone();
+    let rcon_pool_clone = rcon_pool.clone();
 
     tokio::spawn(async move {
         sleep(Duration::from_secs((apology_minutes as u64) * 60)).await;
@@ -300,12 +351,27 @@ async fn handle_teamkill(
         }
         drop(t);
 
-        let kick_cmd = format!("AdminKick {} 您因误伤队友后未在{}分钟内输入{}道歉，已被踢出服务器",
-            &attacker_name, apology_minutes, apology_keyword);
+        // 从缓存中获取最新 PlayerID（可能在倒计时期间变化）
+        let kick_pid = {
+            let states = server_states_clone.read().await;
+            find_player_id_by_steam(&states, server_id, &attacker_id)
+                .or_else(|| find_player_id(&states, server_id, &attacker_name))
+        };
 
-        if let Ok(mut rcon) = SquadRcon::connect(&ip_copy, rcon_port as u16, &pass_copy).await {
-            let _ = rcon.execute(&kick_cmd).await;
-            tracing::info!(server_id, player = %attacker_name, "玩家因未道歉被踢出");
+        let kick_reason = format!(
+            "您因误伤队友后未在{}分钟内输入{}道歉，已被踢出服务器",
+            apology_minutes, apology_kw
+        );
+
+        if let Some(pid) = kick_pid {
+            let kick_cmd = format!("AdminKickById {} {}", pid, kick_reason);
+            send_rcon_cmd(&pool_clone, server_id, &kick_cmd, &rcon_pool_clone).await;
+            tracing::info!(server_id, player = %attacker_name, player_id = pid, "玩家因未道歉被踢出 (AdminKickById)");
+        } else {
+            // 回退：无法获取 PlayerID，尝试用名称踢出
+            let kick_cmd = format!("AdminKick {} {}", attacker_name, kick_reason);
+            send_rcon_cmd(&pool_clone, server_id, &kick_cmd, &rcon_pool_clone).await;
+            tracing::warn!(server_id, player = %attacker_name, "无法获取 PlayerID，使用 AdminKick 名称踢出");
         }
 
         tracker_clone.write().await.mark_kicked(server_id, &attacker_id);
@@ -319,50 +385,41 @@ async fn process_apology(
     server_id: i32,
     steam_id: &str,
     message: &str,
+    rcon_pool: &RconPool,
 ) {
-    let (apology_kw, ip, rcon_port, rcon_password) = match sqlx::query_as::<_, (String, String, i32, String)>(
-        "SELECT tk.apology_keyword, s.ip, s.rcon_port, s.rcon_password \
-         FROM tk_settings tk JOIN servers s ON s.id = tk.server_id \
-         WHERE tk.server_id = $1 AND tk.enabled = true"
+    let apology_kw = match sqlx::query_as::<_, (String,)>(
+        "SELECT apology_keyword FROM tk_settings WHERE server_id = $1 AND enabled = true"
     ).bind(server_id).fetch_optional(pool).await {
-        Ok(Some(c)) => c,
+        Ok(Some((kw,))) => kw,
         _ => return,
     };
 
     let upper = message.to_uppercase();
     let kw_upper = apology_kw.to_uppercase();
-    if !upper.contains(&kw_upper) && upper != format!("!{}", apology_kw).to_uppercase() {
+    if !upper.contains(&kw_upper) {
         return;
     }
 
     let mut t = tracker.write().await;
     if t.mark_apologized(server_id, steam_id) {
         tracing::info!(server_id, %steam_id, "玩家已道歉，取消踢出");
-        send_rcon_broadcast(&ip, rcon_port as u16, &rcon_password, "道歉成功").await;
+        send_rcon_cmd(pool, server_id, "AdminBroadcast 道歉成功，已取消踢出", rcon_pool).await;
     }
 }
 
-// ═══ RCON 辅助函数 ═══
+// ═══ RCON 辅助函数（通过连接池复用连接） ═══
 
-async fn send_rcon_cmd(pool: &PgPool, server_id: i32, cmd: &str) {
+async fn send_rcon_cmd(pool: &PgPool, server_id: i32, cmd: &str, rcon_pool: &RconPool) {
     let creds = match sqlx::query_as::<_, (String, i32, String)>(
         "SELECT ip, rcon_port, rcon_password FROM servers WHERE id = $1"
     ).bind(server_id).fetch_optional(pool).await {
         Ok(Some(c)) => c,
         _ => return,
     };
-    send_rcon_cmd_direct(&creds.0, creds.1 as u16, &creds.2, cmd).await;
-}
-
-async fn send_rcon_cmd_direct(ip: &str, port: u16, password: &str, cmd: &str) {
+    let (ip, port, password) = creds;
     if password.is_empty() { return; }
-    match SquadRcon::connect(ip, port, password).await {
-        Ok(mut rcon) => { let _ = rcon.execute(cmd).await; }
-        Err(e) => tracing::warn!(%ip, %port, %e, "RCON 连接失败"),
+    match rcon_pool.execute(&ip, port as u16, &password, cmd).await {
+        Ok(_) => {}
+        Err(e) => tracing::warn!(%ip, %port, %e, "RCON 命令执行失败"),
     }
-}
-
-async fn send_rcon_broadcast(ip: &str, port: u16, password: &str, message: &str) {
-    let cmd = format!("AdminBroadcast \"{}\"", message);
-    send_rcon_cmd_direct(ip, port, password, &cmd).await;
 }

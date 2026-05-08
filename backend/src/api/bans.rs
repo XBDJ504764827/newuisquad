@@ -3,7 +3,6 @@ use serde::Deserialize;
 use uuid::Uuid;
 use crate::api::AppState;
 use crate::protocol::AgentMessage;
-use crate::rcon_client::squad::SquadRcon;
 
 /// 合并后的封禁条目
 #[derive(serde::Serialize)]
@@ -114,8 +113,7 @@ pub async fn ban_list(
     if let Ok(Some((ip, rcon_port, rcon_pass))) = sqlx::query_as::<_, (String, i32, String)>(
         "SELECT ip, rcon_port, rcon_password FROM servers WHERE id=$1"
     ).bind(server_id).fetch_optional(&state.pool).await {
-        if let Ok(mut rcon) = SquadRcon::connect(&ip, rcon_port as u16, &rcon_pass).await {
-            if let Ok(raw) = rcon.execute("AdminListBans").await {
+        if let Ok(raw) = state.rcon_pool.execute(&ip, rcon_port as u16, &rcon_pass, "AdminListBans").await {
                 for entry in crate::services::rcon_server_info::parse_ban_list(&raw) {
                     if !entry.steam_id.is_empty() && seen.insert(entry.steam_id.clone()) {
                         bans.push(MergedBanEntry {
@@ -128,7 +126,6 @@ pub async fn ban_list(
                     }
                 }
             }
-        }
     }
 
     // 2. 从 bans 表（DB 存储的封禁记录）
@@ -253,7 +250,7 @@ pub async fn ban_player(
     // 2. 再通过 RCON 在线封禁踢出（即时生效）
     let rcon_result: Option<String> = if file_updated {
         if let Some((ref ip, rcon_port, ref rcon_pass)) = rcon_creds {
-            let player_id = match crate::services::rcon_server_info::list_players(ip, rcon_port as u16, rcon_pass).await {
+            let player_id = match crate::services::rcon_server_info::list_players(&state.rcon_pool, ip, rcon_port as u16, rcon_pass).await {
                 Ok(players) => {
                     players.iter()
                         .find(|p| p.steam_id == req.steam_id)
@@ -264,18 +261,15 @@ pub async fn ban_player(
 
             if let Some(pid) = player_id {
                 let cmd = format!("AdminBan {} {} {}", pid, req.duration, req.reason);
-                match SquadRcon::connect(ip, rcon_port as u16, rcon_pass).await {
-                    Ok(mut rcon) => match rcon.execute(&cmd).await {
-                        Ok(resp) => {
-                            tracing::info!(server_id, player_id = pid, steam_id = %req.steam_id, "RCON AdminBan 踢出成功");
-                            Some(resp)
-                        }
-                        Err(e) => {
-                            tracing::warn!(server_id, pid, steam_id = %req.steam_id, error = %e, "RCON AdminBan 失败，ban.cfg 已写入");
-                            None
-                        }
-                    },
-                    Err(_) => None,
+                match state.rcon_pool.execute(ip, rcon_port as u16, rcon_pass, &cmd).await {
+                    Ok(resp) => {
+                        tracing::info!(server_id, player_id = pid, steam_id = %req.steam_id, "RCON AdminBan 踢出成功");
+                        Some(resp)
+                    }
+                    Err(e) => {
+                        tracing::warn!(server_id, pid, steam_id = %req.steam_id, error = %e, "RCON AdminBan 失败，ban.cfg 已写入");
+                        None
+                    }
                 }
             } else {
                 tracing::info!(server_id, steam_id = %req.steam_id, "玩家不在线，仅写入 ban.cfg");
@@ -318,8 +312,7 @@ pub async fn ban_player(
 
     // 5. 也获取本机 RCON 封禁列表中的 bans 写入 bans 表（保持同步）
     if let Some((ref ip, rcon_port, ref rcon_pass)) = rcon_creds {
-        if let Ok(mut rcon) = SquadRcon::connect(ip, rcon_port as u16, rcon_pass).await {
-            if let Ok(raw) = rcon.execute("AdminListBans").await {
+        if let Ok(raw) = state.rcon_pool.execute(ip, rcon_port as u16, rcon_pass, "AdminListBans").await {
                 for entry in crate::services::rcon_server_info::parse_ban_list(&raw) {
                     if !entry.steam_id.is_empty() {
                         let _ = sqlx::query(
@@ -335,7 +328,6 @@ pub async fn ban_player(
                     }
                 }
             }
-        }
     }
 
     if rcon_result.is_some() || file_updated {
