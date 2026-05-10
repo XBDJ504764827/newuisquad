@@ -12,6 +12,10 @@ pub struct TkSettings {
     pub apology_keyword: String,
     pub notification_message: Option<String>,
     pub tk_broadcast_message: Option<String>,
+    pub apology_pre_window_secs: i32,
+    pub tk_attacker_msg: String,
+    pub tk_victim_msg: String,
+    pub tk_broadcast_msg: String,
     pub updated_at: DateTime<Utc>,
 }
 
@@ -23,4 +27,8 @@ pub struct UpdateTkSettingsRequest {
     pub apology_keyword: Option<String>,
     pub notification_message: Option<String>,
     pub tk_broadcast_message: Option<String>,
+    pub apology_pre_window_secs: Option<i32>,
+    pub tk_attacker_msg: Option<String>,
+    pub tk_victim_msg: Option<String>,
+    pub tk_broadcast_msg: Option<String>,
 }

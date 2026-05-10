@@ -9,6 +9,9 @@ pub struct DamageNotifySettings {
     pub enabled: bool,
     pub notify_kill: bool,
     pub notify_damage: bool,
+    pub message_mode: String,
+    pub hit_layout: String,
+    pub kill_layout: String,
     pub updated_at: DateTime<Utc>,
 }
 
@@ -17,4 +20,7 @@ pub struct UpdateDamageNotifyRequest {
     pub enabled: Option<bool>,
     pub notify_kill: Option<bool>,
     pub notify_damage: Option<bool>,
+    pub message_mode: Option<String>,
+    pub hit_layout: Option<String>,
+    pub kill_layout: Option<String>,
 }

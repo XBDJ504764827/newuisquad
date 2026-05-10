@@ -15,7 +15,12 @@ pub async fn get_or_create(pool: &PgPool, server_id: i32) -> Result<TkSettings, 
 pub async fn update(pool: &PgPool, server_id: i32, req: &UpdateTkSettingsRequest) -> Result<TkSettings, sqlx::Error> {
     let current = get_or_create(pool, server_id).await?;
     sqlx::query_as::<_, TkSettings>(
-        "UPDATE tk_settings SET enabled=$1, max_team_kills=$2, apology_time_minutes=$3, apology_keyword=$4, notification_message=$5, tk_broadcast_message=$6, updated_at=NOW() WHERE server_id=$7 RETURNING *"
+        "UPDATE tk_settings SET \
+         enabled=$1, max_team_kills=$2, apology_time_minutes=$3, apology_keyword=$4, \
+         notification_message=$5, tk_broadcast_message=$6, \
+         apology_pre_window_secs=$7, tk_attacker_msg=$8, tk_victim_msg=$9, tk_broadcast_msg=$10, \
+         updated_at=NOW() \
+         WHERE server_id=$11 RETURNING *"
     )
     .bind(req.enabled.unwrap_or(current.enabled))
     .bind(req.max_team_kills.unwrap_or(current.max_team_kills))
@@ -23,6 +28,10 @@ pub async fn update(pool: &PgPool, server_id: i32, req: &UpdateTkSettingsRequest
     .bind(req.apology_keyword.as_deref().unwrap_or(&current.apology_keyword))
     .bind(req.notification_message.as_deref().unwrap_or(current.notification_message.as_deref().unwrap_or("")))
     .bind(req.tk_broadcast_message.as_deref().unwrap_or(current.tk_broadcast_message.as_deref().unwrap_or("")))
+    .bind(req.apology_pre_window_secs.unwrap_or(current.apology_pre_window_secs))
+    .bind(req.tk_attacker_msg.as_deref().unwrap_or(&current.tk_attacker_msg))
+    .bind(req.tk_victim_msg.as_deref().unwrap_or(&current.tk_victim_msg))
+    .bind(req.tk_broadcast_msg.as_deref().unwrap_or(&current.tk_broadcast_msg))
     .bind(server_id)
     .fetch_one(pool)
     .await

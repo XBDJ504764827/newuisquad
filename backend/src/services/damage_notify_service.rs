@@ -19,6 +19,86 @@ pub async fn update(pool: &PgPool, server_id: i32, req: UpdateDamageNotifyReques
     damage_notify_repo::update(pool, server_id, &req).await
 }
 
+// ═══ 模板渲染 ═══
+
+/// 将模板中的 {{key}} 替换为 vars 中对应的值。
+/// 未匹配的变量替换为 "未知"，模板为空则返回空字符串。
+fn render_template(template: &str, vars: &[(&str, &str)]) -> String {
+    let template = template.trim();
+    if template.is_empty() {
+        return String::new();
+    }
+    let mut result = template.to_string();
+    for (key, value) in vars {
+        let placeholder = format!("{{{{{}}}}}", key);
+        result = result.replace(&placeholder, value);
+    }
+    // 替换剩余未匹配的 {{xxx}} 为 "未知"
+    while let Some(start) = result.find("{{") {
+        if let Some(end) = result[start..].find("}}") {
+            result.replace_range(start..start + end + 2, "未知");
+        } else {
+            break;
+        }
+    }
+    result
+}
+
+// ═══ 统一消息分发 ═══
+
+/// 根据 mode 选择发送方式：
+/// - "broadcast": AdminBroadcast 全服广播
+/// - "warning_all": 给所有在线玩家发 AdminWarn
+/// - "warning_related": 仅给 attacker + victim 发 AdminWarn（默认）
+async fn dispatch_message(
+    pool: &PgPool,
+    server_id: i32,
+    message: &str,
+    mode: &str,
+    attacker_steam64: &str,
+    victim_name: &str,
+    server_states: &Arc<tokio::sync::RwLock<HashMap<String, serde_json::Value>>>,
+    rcon_pool: &RconPool,
+) {
+    if message.is_empty() { return; }
+
+    match mode {
+        "broadcast" => {
+            let cmd = format!("AdminBroadcast {}", message);
+            send_rcon_cmd(pool, server_id, &cmd, rcon_pool).await;
+        }
+        "warning_all" => {
+            let states = server_states.read().await;
+            if let Some(state) = states.get(&server_id.to_string()) {
+                if let Some(players) = state.get("players").and_then(|p| p.as_array()) {
+                    for p in players {
+                        if let Some(pid) = p.get("player_id").and_then(|id| id.as_i64()) {
+                            let cmd = format!("AdminWarn {} {}", pid, message);
+                            send_rcon_cmd(pool, server_id, &cmd, rcon_pool).await;
+                        }
+                    }
+                }
+            }
+        }
+        _ => {
+            // warning_related: 仅发给攻击者和受害者
+            let states = server_states.read().await;
+            let attacker_pid = find_player_id_by_steam(&states, server_id, attacker_steam64);
+            let victim_pid = find_player_id(&states, server_id, victim_name);
+            drop(states);
+
+            if let Some(pid) = attacker_pid {
+                let cmd = format!("AdminWarn {} {}", pid, message);
+                send_rcon_cmd(pool, server_id, &cmd, rcon_pool).await;
+            }
+            if let Some(pid) = victim_pid {
+                let cmd = format!("AdminWarn {} {}", pid, message);
+                send_rcon_cmd(pool, server_id, &cmd, rcon_pool).await;
+            }
+        }
+    }
+}
+
 // ════════════════════════════════════════════
 //  统一伤害与误伤通知服务
 //  通过 server_states 缓存中的 team_id 判断敌友
@@ -32,6 +112,7 @@ struct PlayerTkState {
     apologized: bool,
     kicked: bool,
     timer_gen: u64, // 计时器代数，每次新误伤 +1，旧计时器检测到过期则跳过
+    last_apology_at: Option<Instant>, // 道歉预窗口：上次道歉成功的时间
 }
 
 struct TkTracker {
@@ -45,6 +126,7 @@ impl TkTracker {
         let key = (server_id, steam_id.to_string());
         let entry = self.players.entry(key.clone()).or_insert_with(|| PlayerTkState {
             tk_count: 0, apology_deadline: None, apologized: false, kicked: false, timer_gen: 0,
+            last_apology_at: None,
         });
         if entry.kicked { return (entry.tk_count, entry.timer_gen); }
         entry.tk_count += 1;
@@ -60,6 +142,7 @@ impl TkTracker {
             if entry.apology_deadline.is_some() && !entry.kicked {
                 entry.apologized = true;
                 entry.apology_deadline = None;
+                entry.last_apology_at = Some(Instant::now());
                 return true;
             }
         }
@@ -90,6 +173,16 @@ impl TkTracker {
     fn is_timer_current(&self, server_id: i32, steam_id: &str, gen: u64) -> bool {
         self.players.get(&(server_id, steam_id.to_string()))
             .map(|e| e.timer_gen == gen).unwrap_or(false)
+    }
+
+    /// 检查玩家是否在道歉预窗口内（刚道歉过，不需要再次道歉）
+    fn in_apology_pre_window(&self, server_id: i32, steam_id: &str, window_secs: u64) -> bool {
+        if let Some(entry) = self.players.get(&(server_id, steam_id.to_string())) {
+            if let Some(last_apology) = entry.last_apology_at {
+                return last_apology.elapsed().as_secs() < window_secs;
+            }
+        }
+        false
     }
 }
 
@@ -202,7 +295,8 @@ pub fn start_damage_notify(
                         use crate::services::squad_log_parser::ParsedEvent;
                         if let ParsedEvent::KillEvent {
                             ref attacker_name, ref attacker_steam64,
-                            ref victim_name, damage, ..
+                            ref victim_name, damage,
+                            ref weapon, ref event_type, ..
                         } = event {
                             let attacker = attacker_name.as_str();
                             let victim = victim_name.as_str();
@@ -226,20 +320,32 @@ pub fn start_damage_notify(
 
                             match same_team {
                                 Some(true) => {
-                                    // 友方误伤
-                                    handle_teamkill(
-                                        &pool, &tracker, &server_states, server_id,
-                                        attacker, attacker_steam64, victim, damage,
-                                        attacker_pid, &rcon_pool,
-                                    ).await;
+                                    if event_type == "damage" || event_type == "wound" {
+                                        // 友方误伤
+                                        handle_teamkill(
+                                            &pool, &tracker, &server_states, server_id,
+                                            attacker, attacker_steam64, victim, damage,
+                                            attacker_pid, &rcon_pool,
+                                        ).await;
+                                    }
+                                    // event_type == "death" 且 same_team: TK击杀在damage阶段已处理，跳过
                                 }
                                 Some(false) => {
-                                    // 敌方伤害
-                                    handle_enemy_damage(
-                                        &pool, server_id,
-                                        attacker, victim, damage,
-                                        attacker_pid, &rcon_pool,
-                                    ).await;
+                                    if event_type == "damage" {
+                                        // 敌方伤害
+                                        handle_enemy_damage(
+                                            &pool, server_id,
+                                            attacker, attacker_steam64, victim, damage, weapon,
+                                            &server_states, &rcon_pool,
+                                        ).await;
+                                    } else if event_type == "death" || event_type == "wound" {
+                                        // 击杀/击倒通知
+                                        handle_kill_notify(
+                                            &pool, server_id,
+                                            attacker, attacker_steam64, victim, damage, weapon,
+                                            &server_states, &rcon_pool,
+                                        ).await;
+                                    }
                                 }
                                 None => {
                                     // 无法判断队伍（玩家不在缓存中），跳过
@@ -265,28 +371,65 @@ pub fn start_damage_notify(
     })
 }
 
-/// 处理敌方伤害通知
+/// 处理敌方伤害通知 — 使用模板和 dispatch_message
 async fn handle_enemy_damage(
     pool: &PgPool, server_id: i32,
-    attacker: &str, victim: &str, damage: f64,
-    attacker_pid: Option<i32>,
+    attacker: &str, attacker_steam64: &str,
+    victim: &str, damage: f64, weapon: &str,
+    server_states: &Arc<tokio::sync::RwLock<HashMap<String, serde_json::Value>>>,
     rcon_pool: &RconPool,
 ) {
-    // 检查敌方伤害通知子开关
-    let notify_damage = match sqlx::query_as::<_, (bool,)>(
-        "SELECT notify_damage FROM damage_notify_settings WHERE server_id = $1"
+    // 读取配置：notify_damage 开关 + hit_layout + message_mode
+    let config = match sqlx::query_as::<_, (bool, String, String)>(
+        "SELECT notify_damage, hit_layout, message_mode FROM damage_notify_settings WHERE server_id = $1"
     ).bind(server_id).fetch_optional(pool).await {
-        Ok(Some((nd,))) => nd,
-        _ => false,
+        Ok(Some(c)) => c,
+        _ => return,
     };
+    let (notify_damage, hit_layout, message_mode) = config;
     if !notify_damage { return; }
 
-    let pid_str = attacker_pid.map(|id| id.to_string()).unwrap_or_else(|| attacker.to_string());
-    let cmd = format!("AdminWarn {} 你对{}造成了{:.0}点伤害", pid_str, victim, damage);
-    send_rcon_cmd(pool, server_id, &cmd, rcon_pool).await;
+    let damage_str = format!("{:.0}", damage);
+    let message = render_template(&hit_layout, &[
+        ("attacker", attacker),
+        ("victim", victim),
+        ("damage", &damage_str),
+        ("weapon", weapon),
+    ]);
+
+    dispatch_message(pool, server_id, &message, &message_mode, attacker_steam64, victim, server_states, rcon_pool).await;
 }
 
-/// 处理友方误伤 — 每次伤害立即广播并启动道歉倒计时
+/// 处理击杀/击倒通知（敌方）
+async fn handle_kill_notify(
+    pool: &PgPool, server_id: i32,
+    attacker: &str, attacker_steam64: &str,
+    victim: &str, damage: f64, weapon: &str,
+    server_states: &Arc<tokio::sync::RwLock<HashMap<String, serde_json::Value>>>,
+    rcon_pool: &RconPool,
+) {
+    // 读取配置：notify_kill 开关 + kill_layout + message_mode
+    let config = match sqlx::query_as::<_, (bool, String, String)>(
+        "SELECT notify_kill, kill_layout, message_mode FROM damage_notify_settings WHERE server_id = $1"
+    ).bind(server_id).fetch_optional(pool).await {
+        Ok(Some(c)) => c,
+        _ => return,
+    };
+    let (notify_kill, kill_layout, message_mode) = config;
+    if !notify_kill { return; }
+
+    let damage_str = format!("{:.0}", damage);
+    let message = render_template(&kill_layout, &[
+        ("attacker", attacker),
+        ("victim", victim),
+        ("damage", &damage_str),
+        ("weapon", weapon),
+    ]);
+
+    dispatch_message(pool, server_id, &message, &message_mode, attacker_steam64, victim, server_states, rcon_pool).await;
+}
+
+/// 处理友方误伤 — 使用模板发送消息并启动道歉倒计时
 async fn handle_teamkill(
     pool: &PgPool,
     tracker: &Arc<RwLock<TkTracker>>,
@@ -299,34 +442,76 @@ async fn handle_teamkill(
     attacker_pid: Option<i32>,
     rcon_pool: &RconPool,
 ) {
-    // 查询 TK 设置（误伤子开关）
-    let tk_config = match sqlx::query_as::<_, (bool, i32, String)>(
-        "SELECT enabled, apology_time_minutes, apology_keyword \
+    // 查询 TK 设置
+    let tk_config = match sqlx::query_as::<_, (bool, i32, String, i32, String, String, String)>(
+        "SELECT enabled, apology_time_minutes, apology_keyword, apology_pre_window_secs, \
+         tk_attacker_msg, tk_victim_msg, tk_broadcast_msg \
          FROM tk_settings WHERE server_id = $1"
     ).bind(server_id).fetch_optional(pool).await {
         Ok(Some(c)) => c,
         _ => return,
     };
-    let (tk_enabled, apology_minutes, apology_keyword) = tk_config;
+    let (tk_enabled, apology_minutes, apology_keyword, pre_window_secs,
+         tk_attacker_msg, tk_victim_msg, tk_broadcast_msg) = tk_config;
     if !tk_enabled { return; }
 
     let pid_str = attacker_pid.map(|id| id.to_string()).unwrap_or_else(|| attacker.to_string());
+    let seconds_str = (apology_minutes * 60).to_string();
+    let damage_str = format!("{:.0}", damage);
 
-    // 1. AdminBroadcast 黄字广播（按用户要求格式）
-    let broadcast_msg = format!(
-        "{}误伤了队友{}，请输入{}道歉否则将在{}分钟后被踢出",
-        attacker, victim, apology_keyword, apology_minutes
-    );
-    send_rcon_cmd(pool, server_id, &format!("AdminBroadcast {}", broadcast_msg), rcon_pool).await;
+    // 模板变量
+    let vars: Vec<(&str, &str)> = vec![
+        ("attacker", attacker),
+        ("victim", victim),
+        ("damage", &damage_str),
+        ("seconds", &seconds_str),
+        ("keyword", &apology_keyword),
+    ];
 
-    // 2. 更新 TK 计数并重置道歉状态，获取当前计时器代数
+    // 1. 广播消息
+    let broadcast_msg = render_template(&tk_broadcast_msg, &vars);
+    if !broadcast_msg.is_empty() {
+        send_rcon_cmd(pool, server_id, &format!("AdminBroadcast {}", broadcast_msg), rcon_pool).await;
+    }
+
+    // 2. 攻击者私发警告
+    let attacker_msg = render_template(&tk_attacker_msg, &vars);
+    if !attacker_msg.is_empty() {
+        let cmd = format!("AdminWarn {} {}", pid_str, attacker_msg);
+        send_rcon_cmd(pool, server_id, &cmd, rcon_pool).await;
+    }
+
+    // 3. 受害者私发警告（新增）
+    let victim_msg = render_template(&tk_victim_msg, &vars);
+    if !victim_msg.is_empty() {
+        let states = server_states.read().await;
+        let victim_pid = find_player_id(&states, server_id, victim);
+        drop(states);
+        if let Some(vpid) = victim_pid {
+            let cmd = format!("AdminWarn {} {}", vpid, victim_msg);
+            send_rcon_cmd(pool, server_id, &cmd, rcon_pool).await;
+        }
+    }
+
+    // 4. 道歉预窗口检查
+    let skip_apology = {
+        let t = tracker.read().await;
+        t.in_apology_pre_window(server_id, attacker_steam64, pre_window_secs as u64)
+    };
+
+    if skip_apology {
+        tracing::info!(server_id, player = %attacker, victim = %victim, "道歉预窗口内，跳过踢出计时器");
+        return;
+    }
+
+    // 5. 更新 TK 计数并重置道歉状态
     let (tk_count, timer_gen) = {
         let mut t = tracker.write().await;
         t.record_tk(server_id, attacker_steam64)
     };
     tracing::info!(server_id, player = %attacker, tk_count, victim = %victim, damage, timer_gen, "误伤事件");
 
-    // 3. 启动/重置道歉倒计时（每次误伤都重新计时）
+    // 6. 启动道歉倒计时
     let deadline = Instant::now() + Duration::from_secs((apology_minutes as u64) * 60);
     tracker.write().await.set_apology_deadline(server_id, attacker_steam64, deadline);
 
@@ -342,7 +527,6 @@ async fn handle_teamkill(
         sleep(Duration::from_secs((apology_minutes as u64) * 60)).await;
 
         let t = tracker_clone.read().await;
-        // 已道歉、已踢出、或有新误伤重置了计时器 → 跳过
         if t.is_apologized(server_id, &attacker_id)
             || t.is_kicked(server_id, &attacker_id)
             || !t.is_timer_current(server_id, &attacker_id, timer_gen)
@@ -368,7 +552,6 @@ async fn handle_teamkill(
             send_rcon_cmd(&pool_clone, server_id, &kick_cmd, &rcon_pool_clone).await;
             tracing::info!(server_id, player = %attacker_name, player_id = pid, "玩家因未道歉被踢出 (AdminKickById)");
         } else {
-            // 回退：无法获取 PlayerID，尝试用名称踢出
             let kick_cmd = format!("AdminKick {} {}", attacker_name, kick_reason);
             send_rcon_cmd(&pool_clone, server_id, &kick_cmd, &rcon_pool_clone).await;
             tracing::warn!(server_id, player = %attacker_name, "无法获取 PlayerID，使用 AdminKick 名称踢出");
