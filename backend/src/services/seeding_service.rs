@@ -55,21 +55,21 @@ impl SeedModeService {
     }
 
     async fn tick(&self) {
-        let servers = match sqlx::query_as::<_, (i32, String, i32, String)>(
-            "SELECT id, ip, rcon_port, rcon_password FROM servers WHERE rcon_port > 0 AND rcon_password != ''"
+        let servers = match sqlx::query_as::<_, (i32,)>(
+            "SELECT id FROM servers WHERE rcon_port > 0 AND rcon_password != ''"
         ).fetch_all(&self.pool).await {
             Ok(s) => s,
             Err(_) => return,
         };
 
-        for (server_id, ip, rcon_port, password) in servers {
-            if let Err(e) = self.process_server(server_id, &ip, rcon_port as u16, &password).await {
+        for (server_id,) in servers {
+            if let Err(e) = self.process_server(server_id).await {
                 tracing::warn!(server_id, error = %e, "播种模式处理失败");
             }
         }
     }
 
-    async fn process_server(&self, server_id: i32, ip: &str, port: u16, password: &str) -> Result<(), String> {
+    async fn process_server(&self, server_id: i32) -> Result<(), String> {
         let settings = match sqlx::query_as::<_, (bool, i32, bool, bool, bool, bool, bool, bool, bool)>(
             "SELECT enabled, player_threshold, vehicle_claim, respawn_timer, \
              deploy_restrict, kit_restrict, heavy_vehicle_require, use_enemy_vehicle, vehicle_fill \
@@ -89,7 +89,7 @@ impl SeedModeService {
         };
 
         // Get current player count
-        let player_count = match self.rcon_pool.execute(ip, port, password, "ListPlayers").await {
+        let player_count = match self.rcon_pool.execute_by_server_id(server_id, "ListPlayers").await {
             Ok(raw) => {
                 raw.lines().filter(|l| {
                     let t = l.trim();
@@ -119,8 +119,8 @@ impl SeedModeService {
             state.mode = new_mode.clone();
 
             match new_mode {
-                SeedMode::Seeding => self.apply_seeding_rules(ip, port, password, &settings).await?,
-                SeedMode::Live => self.revert_seeding_rules(ip, port, password, &settings).await?,
+                SeedMode::Seeding => self.apply_seeding_rules(server_id, &settings).await?,
+                SeedMode::Live => self.revert_seeding_rules(server_id, &settings).await?,
                 SeedMode::Waiting => {}
             }
 
@@ -131,7 +131,7 @@ impl SeedModeService {
                 SeedMode::Waiting => String::new(),
             };
             if !msg.is_empty() {
-                let _ = self.rcon_pool.execute(ip, port, password, &format!("AdminBroadcast {}", msg)).await;
+                let _ = self.rcon_pool.execute_by_server_id(server_id, &format!("AdminBroadcast {}", msg)).await;
             }
         }
 
@@ -142,7 +142,7 @@ impl SeedModeService {
             if since_last >= 150 {
                 // Broadcast every 2.5 minutes
                 let msg = format!("暖服模式进行中 — 当前 {} 人，满 {} 人后自动切换正式模式", player_count, threshold);
-                if let Err(e) = self.rcon_pool.execute(ip, port, password, &format!("AdminBroadcast {}", msg)).await {
+                if let Err(e) = self.rcon_pool.execute_by_server_id(server_id, &format!("AdminBroadcast {}", msg)).await {
                     tracing::warn!(server_id, error = %e, "播种消息广播失败");
                 }
                 state.last_broadcast = now;
@@ -152,7 +152,7 @@ impl SeedModeService {
         Ok(())
     }
 
-    async fn apply_seeding_rules(&self, ip: &str, port: u16, password: &str, settings: &SeedSettings) -> Result<(), String> {
+    async fn apply_seeding_rules(&self, server_id: i32, settings: &SeedSettings) -> Result<(), String> {
         let cmds: Vec<Option<&str>> = vec![
             if settings.respawn_timer { Some("AdminNoRespawnTimer 1") } else { None },
             if settings.vehicle_claim { Some("AdminDisableVehicleClaiming 1") } else { None },
@@ -163,12 +163,12 @@ impl SeedModeService {
         ];
 
         for cmd in cmds.into_iter().flatten() {
-            let _ = self.rcon_pool.execute(ip, port, password, cmd).await;
+            let _ = self.rcon_pool.execute_by_server_id(server_id, cmd).await;
         }
         Ok(())
     }
 
-    async fn revert_seeding_rules(&self, ip: &str, port: u16, password: &str, settings: &SeedSettings) -> Result<(), String> {
+    async fn revert_seeding_rules(&self, server_id: i32, settings: &SeedSettings) -> Result<(), String> {
         let cmds: Vec<Option<&str>> = vec![
             if settings.respawn_timer { Some("AdminNoRespawnTimer 0") } else { None },
             if settings.vehicle_claim { Some("AdminDisableVehicleClaiming 0") } else { None },
@@ -179,7 +179,7 @@ impl SeedModeService {
         ];
 
         for cmd in cmds.into_iter().flatten() {
-            let _ = self.rcon_pool.execute(ip, port, password, cmd).await;
+            let _ = self.rcon_pool.execute_by_server_id(server_id, cmd).await;
         }
         Ok(())
     }

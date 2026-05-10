@@ -30,6 +30,11 @@ pub async fn update(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     match admin_user_service::update(&state.pool, id, req).await {
         Ok(Some(user)) => {
+            // 清除该用户的权限版本缓存，强制下次请求从 DB 读取
+            {
+                let mut cache = state.permission_version_cache.write().await;
+                cache.remove(&user.username);
+            }
             crate::services::system_log::action_log(&state.pool, "admin_users", &format!("更新管理员 {}", user.username), "").await;
             Ok(Json(serde_json::json!(user)))
         }

@@ -13,6 +13,7 @@ pub struct AdminUser {
     pub permissions: JsonValue,
     pub steam_id64: Option<String>,
     pub notes: Option<String>,
+    pub permission_version: i32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

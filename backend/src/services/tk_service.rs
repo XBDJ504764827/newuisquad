@@ -4,7 +4,7 @@ use sqlx::PgPool;
 use tokio::sync::RwLock;
 use tokio::time::{sleep, Duration, Instant};
 use crate::models::server_log::LogEntry;
-use crate::rcon_client::squad::SquadRcon;
+use crate::rcon_client::pool::RconPool;
 
 /// 玩家误杀状态
 #[derive(Debug, Clone)]
@@ -183,6 +183,7 @@ fn parse_chat(line: &str) -> Option<(String, String, String)> {
 pub fn start_tk_monitor(
     pool: PgPool,
     mut log_rx: tokio::sync::broadcast::Receiver<LogEntry>,
+    rcon_pool: RconPool,
 ) -> tokio::task::JoinHandle<()> {
     let tracker = Arc::new(RwLock::new(TkTracker::new()));
 
@@ -199,15 +200,15 @@ pub fn start_tk_monitor(
                     // 1. 检测 TK 事件
                     if let Some((attacker_name, attacker_id, victim_name)) = parse_tk(raw) {
                         // 查询 TK 设置（含道歉关键字和广播消息）
-                        let tk_config = match sqlx::query_as::<_, (String, i32, String, i32, String, Option<String>, Option<String>)>(
-                            "SELECT s.ip, s.rcon_port, s.rcon_password, tk.apology_time_minutes, tk.apology_keyword, tk.notification_message, tk.tk_broadcast_message FROM servers s JOIN tk_settings tk ON s.id = tk.server_id WHERE s.id = $1 AND tk.enabled = true"
+                        let tk_config = match sqlx::query_as::<_, (i32, String, Option<String>, Option<String>)>(
+                            "SELECT tk.apology_time_minutes, tk.apology_keyword, tk.notification_message, tk.tk_broadcast_message FROM tk_settings tk WHERE tk.server_id = $1 AND tk.enabled = true"
                         ).bind(server_id).fetch_optional(&pool).await {
                             Ok(Some(c)) => c,
                             Ok(None) => continue,
                             Err(e) => { tracing::error!(%e, "查询TK设置失败"); continue; }
                         };
 
-                        let (ip, rcon_port, rcon_password, apology_minutes, apology_keyword, notif_msg, tk_broadcast_msg) = tk_config;
+                        let (apology_minutes, apology_keyword, notif_msg, tk_broadcast_msg) = tk_config;
                         let max_tk = match sqlx::query_scalar::<_, i32>(
                             "SELECT max_team_kills FROM tk_settings WHERE server_id = $1"
                         ).bind(server_id).fetch_optional(&pool).await {
@@ -222,13 +223,13 @@ pub fn start_tk_monitor(
                         let broadcast_msg = tk_broadcast_msg.unwrap_or_else(|| {
                             format!("{}误伤了{}，输入{}道歉", attacker_name, victim_name, apology_keyword)
                         });
-                        send_rcon_broadcast(&ip, rcon_port as u16, &rcon_password, &broadcast_msg).await;
+                        send_rcon_broadcast(&rcon_pool, server_id, &broadcast_msg).await;
 
                         // 发送 AdminWarn 警告
                         let default_warn = format!("您误伤了友方{}，请在{}分钟内输入{}道歉，超过最大误杀数({}人)将被踢出", victim_name, apology_minutes, apology_keyword, max_tk);
                         let warn_msg = notif_msg.unwrap_or(default_warn)
                             .replace("{time}", &format!("{}分钟", apology_minutes));
-                        match send_rcon_warn(&ip, rcon_port as u16, &rcon_password, &attacker_name, &warn_msg).await {
+                        match send_rcon_warn(&rcon_pool, server_id, &attacker_name, &warn_msg).await {
                             Ok(_) => tracing::info!(server_id, player = %attacker_name, tk_count, "已发送误杀警告"),
                             Err(e) => tracing::error!(server_id, player = %attacker_name, error = %e, "AdminWarn 发送失败"),
                         }
@@ -240,8 +241,7 @@ pub fn start_tk_monitor(
                             let tracker_clone = tracker.clone();
                             let attacker_id_copy = attacker_id.to_string();
                             let attacker_name_copy = attacker_name.to_string();
-                            let ip_copy = ip.clone();
-                            let rcon_pass_copy = rcon_password.clone();
+                            let rcon_pool_clone = rcon_pool.clone();
 
                             tokio::spawn(async move {
                                 sleep(Duration::from_secs((apology_minutes as u64) * 60)).await;
@@ -253,7 +253,7 @@ pub fn start_tk_monitor(
                                 drop(t);
 
                                 let kick_msg = format!("您因累计误杀队友超过{}次且未在{}分钟内道歉，已被踢出服务器", max_tk, apology_minutes);
-                                match send_rcon_kick(&ip_copy, rcon_port as u16, &rcon_pass_copy, &attacker_name_copy, &kick_msg).await {
+                                match send_rcon_kick(&rcon_pool_clone, server_id, &attacker_name_copy, &kick_msg).await {
                                     Ok(_) => tracing::info!(server_id, player = %attacker_name_copy, "玩家因未道歉被踢出"),
                                     Err(e) => tracing::error!(server_id, player = %attacker_name_copy, error = %e, "AdminKick 发送失败"),
                                 }
@@ -278,19 +278,8 @@ pub fn start_tk_monitor(
                             let mut t = tracker.write().await;
                             if t.mark_apologized(server_id, &steam_id) {
                                 tracing::info!(server_id, steam_id, "玩家已道歉，取消踢出");
-                                // 发送黄字广播: 道歉成功（不可自定义）
-                                let ip = match sqlx::query_scalar::<_, String>(
-                                    "SELECT ip FROM servers WHERE id = $1"
-                                ).bind(server_id).fetch_optional(&pool).await {
-                                    Ok(Some(ip)) => ip,
-                                    _ => continue,
-                                };
-                                let rcon_cred = sqlx::query_as::<_, (i32, String)>(
-                                    "SELECT rcon_port, rcon_password FROM servers WHERE id = $1"
-                                ).bind(server_id).fetch_optional(&pool).await;
-                                if let Ok(Some((port, pass))) = rcon_cred {
-                                    send_rcon_broadcast(&ip, port as u16, &pass, "道歉成功").await;
-                                }
+                                // 发送黄字广播: 道歉成功
+                                send_rcon_broadcast(&rcon_pool, server_id, "道歉成功").await;
                             }
                         }
                     }
@@ -307,23 +296,19 @@ pub fn start_tk_monitor(
     })
 }
 
-async fn send_rcon_warn(ip: &str, port: u16, password: &str, player_name: &str, message: &str) -> Result<(), String> {
-    let mut rcon = SquadRcon::connect(ip, port, password).await?;
+async fn send_rcon_warn(rcon_pool: &RconPool, server_id: i32, player_name: &str, message: &str) -> Result<(), String> {
     let cmd = format!("AdminWarn \"{}\" \"{}\"", player_name, message);
-    rcon.execute(&cmd).await?;
+    rcon_pool.execute_by_server_id(server_id, &cmd).await?;
     Ok(())
 }
 
-async fn send_rcon_broadcast(ip: &str, port: u16, password: &str, message: &str) {
-    if let Ok(mut rcon) = SquadRcon::connect(ip, port, password).await {
-        let cmd = format!("AdminBroadcast \"{}\"", message);
-        let _ = rcon.execute(&cmd).await;
-    }
+async fn send_rcon_broadcast(rcon_pool: &RconPool, server_id: i32, message: &str) {
+    let cmd = format!("AdminBroadcast \"{}\"", message);
+    let _ = rcon_pool.execute_by_server_id(server_id, &cmd).await;
 }
 
-async fn send_rcon_kick(ip: &str, port: u16, password: &str, player_name: &str, reason: &str) -> Result<(), String> {
-    let mut rcon = SquadRcon::connect(ip, port, password).await?;
+async fn send_rcon_kick(rcon_pool: &RconPool, server_id: i32, player_name: &str, reason: &str) -> Result<(), String> {
     let cmd = format!("AdminKick \"{}\" \"{}\"", player_name, reason);
-    rcon.execute(&cmd).await?;
+    rcon_pool.execute_by_server_id(server_id, &cmd).await?;
     Ok(())
 }

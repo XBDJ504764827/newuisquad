@@ -16,12 +16,7 @@ pub async fn execute(
 
     let response = state
         .rcon_pool
-        .execute(
-            &server.ip,
-            server.rcon_port as u16,
-            &server.rcon_password,
-            &req.command,
-        )
+        .execute_by_server_id(server_id, &req.command)
         .await?;
 
     system_log::backend_info(

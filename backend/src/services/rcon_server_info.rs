@@ -41,15 +41,33 @@ pub async fn list_players(pool: &RconPool, ip: &str, port: u16, password: &str) 
     Ok(parse_list_players(&raw))
 }
 
+/// 通过 server_id 执行 ListPlayers
+pub async fn list_players_by_id(pool: &RconPool, server_id: i32) -> Result<Vec<PlayerInfo>, String> {
+    let raw = pool.execute_by_server_id(server_id, "ListPlayers").await?;
+    Ok(parse_list_players(&raw))
+}
+
 /// 执行 ListSquads 并解析
 pub async fn list_squads(pool: &RconPool, ip: &str, port: u16, password: &str) -> Result<Vec<SquadInfo>, String> {
     let raw = pool.execute(ip, port, password, "ListSquads").await?;
     Ok(parse_list_squads(&raw))
 }
 
+/// 通过 server_id 执行 ListSquads
+pub async fn list_squads_by_id(pool: &RconPool, server_id: i32) -> Result<Vec<SquadInfo>, String> {
+    let raw = pool.execute_by_server_id(server_id, "ListSquads").await?;
+    Ok(parse_list_squads(&raw))
+}
+
 /// 获取当前地图
 pub async fn get_map(pool: &RconPool, ip: &str, port: u16, password: &str) -> Result<(String, String), String> {
     let raw = pool.execute(ip, port, password, "ShowNextMap").await?;
+    Ok(parse_map(&raw))
+}
+
+/// 通过 server_id 获取当前地图
+pub async fn get_map_by_id(pool: &RconPool, server_id: i32) -> Result<(String, String), String> {
+    let raw = pool.execute_by_server_id(server_id, "ShowNextMap").await?;
     Ok(parse_map(&raw))
 }
 
@@ -88,9 +106,21 @@ pub async fn get_bans(pool: &RconPool, ip: &str, port: u16, password: &str) -> R
     Ok(parse_ban_list(&raw))
 }
 
+/// 通过 server_id 获取 Ban 列表
+pub async fn get_bans_by_id(pool: &RconPool, server_id: i32) -> Result<Vec<BanEntry>, String> {
+    let raw = pool.execute_by_server_id(server_id, "AdminListBans").await?;
+    Ok(parse_ban_list(&raw))
+}
+
 /// 获取 Warn 列表
 pub async fn get_warns(pool: &RconPool, ip: &str, port: u16, password: &str) -> Result<Vec<WarnEntry>, String> {
     let raw = pool.execute(ip, port, password, "AdminListWarns").await?;
+    Ok(parse_warn_list(&raw))
+}
+
+/// 通过 server_id 获取 Warn 列表
+pub async fn get_warns_by_id(pool: &RconPool, server_id: i32) -> Result<Vec<WarnEntry>, String> {
+    let raw = pool.execute_by_server_id(server_id, "AdminListWarns").await?;
     Ok(parse_warn_list(&raw))
 }
 
@@ -98,6 +128,13 @@ pub async fn get_warns(pool: &RconPool, ip: &str, port: u16, password: &str) -> 
 pub async fn get_server_info(pool: &RconPool, ip: &str, port: u16, password: &str) -> Result<ServerInfo, String> {
     let raw = pool.execute(ip, port, password, "ShowServerInfo").await?;
     let (next_map, next_layer) = get_map(pool, ip, port, password).await.unwrap_or_default();
+    Ok(parse_server_info(&raw, &next_map, &next_layer))
+}
+
+/// 通过 server_id 获取服务器基本信息
+pub async fn get_server_info_by_id(pool: &RconPool, server_id: i32) -> Result<ServerInfo, String> {
+    let raw = pool.execute_by_server_id(server_id, "ShowServerInfo").await?;
+    let (next_map, next_layer) = get_map_by_id(pool, server_id).await.unwrap_or_default();
     Ok(parse_server_info(&raw, &next_map, &next_layer))
 }
 
@@ -109,6 +146,19 @@ pub async fn get_server_state(pool: &RconPool, ip: &str, port: u16, password: &s
 
     // 从 ListSquads 原始响应中解析阵营名称
     let squads_raw = pool.execute(ip, port, password, "ListSquads").await.unwrap_or_default();
+    let teams = parse_team_names(&squads_raw, &players);
+
+    Ok(ServerState { players, squads, teams, map_name, game_mode })
+}
+
+/// 通过 server_id 获取完整服务器状态
+pub async fn get_server_state_by_id(pool: &RconPool, server_id: i32) -> Result<ServerState, String> {
+    let players = list_players_by_id(pool, server_id).await.unwrap_or_default();
+    let squads = list_squads_by_id(pool, server_id).await.unwrap_or_default();
+    let (map_name, game_mode) = get_map_by_id(pool, server_id).await.unwrap_or_default();
+
+    // 从 ListSquads 原始响应中解析阵营名称
+    let squads_raw = pool.execute_by_server_id(server_id, "ListSquads").await.unwrap_or_default();
     let teams = parse_team_names(&squads_raw, &players);
 
     Ok(ServerState { players, squads, teams, map_name, game_mode })

@@ -37,7 +37,7 @@ async fn main() -> anyhow::Result<()> {
     let log_batcher = services::log_batcher::LogBatcher::new(pool.clone());
 
     // 启动 RCON 连接池（每连接独立命令队列、优先级、健康检查、自动重连）
-    let rcon_pool = rcon_client::pool::RconPool::new();
+    let rcon_pool = rcon_client::pool::RconPool::with_db(pool.clone());
     // 创建事件管理器（所有服务通过它解耦通信）
     let event_manager = Arc::new(services::event_manager::EventManager::new(10000));
     // 启动实时玩家追踪服务
@@ -84,6 +84,7 @@ async fn main() -> anyhow::Result<()> {
         team_balance: Some(team_balance.clone()),
         afk_service: Some(afk_service.clone()),
         event_manager: Some(event_manager.clone()),
+        permission_version_cache: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
     };
 
     // 启动广播处理服务

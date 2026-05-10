@@ -47,21 +47,21 @@ impl AfkService {
     }
 
     async fn check_all(&self) {
-        let servers = match sqlx::query_as::<_, (i32, String, i32, String)>(
-            "SELECT id, ip, rcon_port, rcon_password FROM servers WHERE rcon_port > 0 AND rcon_password != ''"
+        let servers = match sqlx::query_as::<_, (i32,)>(
+            "SELECT id FROM servers WHERE rcon_port > 0 AND rcon_password != ''"
         ).fetch_all(&self.pool).await {
             Ok(s) => s,
             Err(_) => return,
         };
 
-        for (server_id, ip, rcon_port, password) in servers {
-            if let Err(e) = self.check_server(server_id, &ip, rcon_port as u16, &password).await {
+        for (server_id,) in servers {
+            if let Err(e) = self.check_server(server_id).await {
                 tracing::debug!(server_id, error = %e, "AFK 检查失败");
             }
         }
     }
 
-    async fn check_server(&self, server_id: i32, ip: &str, port: u16, password: &str) -> Result<(), String> {
+    async fn check_server(&self, server_id: i32) -> Result<(), String> {
         let settings = match sqlx::query_as::<_, (bool, i32, i32)>(
             "SELECT enabled, min_players_to_check, max_afk_minutes FROM afk_settings WHERE server_id=$1"
         ).bind(server_id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())? {
@@ -73,7 +73,7 @@ impl AfkService {
         };
 
         // Get current players
-        let raw = self.rcon_pool.execute(ip, port, password, "ListPlayers").await?;
+        let raw = self.rcon_pool.execute_by_server_id(server_id, "ListPlayers").await?;
         let players = parse_players(&raw);
 
         // Only check if enough players online
@@ -123,7 +123,7 @@ impl AfkService {
                     "AdminKickById {} 您因超过{}分钟未加入小队被自动踢出",
                     pid, max_afk
                 );
-                if self.rcon_pool.execute(ip, port, password, &kick_cmd).await.is_ok() {
+                if self.rcon_pool.execute_by_server_id(server_id, &kick_cmd).await.is_ok() {
                     entry.kicked = true;
                     tracing::info!(server_id, player = %name, pid, afk_minutes, "AFK 自动踢出");
                 }
@@ -139,7 +139,7 @@ impl AfkService {
                         "AdminWarn \"{}\" 您未加入小队已有{}分钟，请在{}分钟内加入小队否则将被自动踢出",
                         name, afk_minutes, remaining
                     );
-                    let _ = self.rcon_pool.execute(ip, port, password, &warn_cmd).await;
+                    let _ = self.rcon_pool.execute_by_server_id(server_id, &warn_cmd).await;
                     entry.last_warning_at = Some(now);
                     entry.warning_count += 1;
                     tracing::info!(server_id, player = %name, pid, afk_minutes, remaining, "AFK 警告");

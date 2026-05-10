@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering as AtomicOrdering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, Semaphore, mpsc, oneshot};
+use sqlx::PgPool;
 
 use super::squad::SquadRcon;
 
@@ -311,13 +312,65 @@ impl ServerConnection {
 #[derive(Clone)]
 pub struct RconPool {
     connections: Arc<Mutex<std::collections::HashMap<String, Arc<ServerConnection>>>>,
+    db_pool: Option<PgPool>,
 }
 
 impl RconPool {
     pub fn new() -> Self {
         Self {
             connections: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            db_pool: None,
         }
+    }
+
+    /// 带数据库连接的构造函数，支持 execute_by_server_id
+    pub fn with_db(db_pool: PgPool) -> Self {
+        Self {
+            connections: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            db_pool: Some(db_pool),
+        }
+    }
+
+    /// 通过 server_id 查询凭据并执行 RCON 命令（普通优先级）
+    pub async fn execute_by_server_id(
+        &self,
+        server_id: i32,
+        command: &str,
+    ) -> Result<String, String> {
+        let (ip, port, password) = self.get_server_credentials(server_id).await?;
+        self.execute(&ip, port, &password, command).await
+    }
+
+    /// 通过 server_id 执行（高优先级）
+    pub async fn execute_by_server_id_high_priority(
+        &self,
+        server_id: i32,
+        command: &str,
+    ) -> Result<String, String> {
+        let (ip, port, password) = self.get_server_credentials(server_id).await?;
+        self.execute_high_priority(&ip, port, &password, command).await
+    }
+
+    /// 通过 server_id 执行（最高优先级 - 用于封禁等关键操作）
+    pub async fn execute_by_server_id_critical(
+        &self,
+        server_id: i32,
+        command: &str,
+    ) -> Result<String, String> {
+        let (ip, port, password) = self.get_server_credentials(server_id).await?;
+        self.execute_critical(&ip, port, &password, command).await
+    }
+
+    /// 内部：通过 server_id 从数据库查询服务器凭据
+    async fn get_server_credentials(&self, server_id: i32) -> Result<(String, u16, String), String> {
+        let db = self.db_pool.as_ref()
+            .ok_or_else(|| "RconPool 未注入数据库连接，无法通过 server_id 查询".to_string())?;
+        let row = sqlx::query_as::<_, (String, i32, String)>(
+            "SELECT ip, rcon_port, rcon_password FROM servers WHERE id=$1"
+        ).bind(server_id).fetch_optional(db).await
+            .map_err(|e| format!("查询服务器凭据失败: {}", e))?;
+        let (ip, port, password) = row.ok_or_else(|| format!("服务器 id={} 不存在", server_id))?;
+        Ok((ip, port as u16, password))
     }
 
     /// Execute with default options (normal priority, 30s timeout, 1 retry)

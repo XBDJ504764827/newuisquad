@@ -56,21 +56,12 @@ impl BanEnforcer {
         // Check if ban is active (0 = permanent, >0 = minutes remaining check)
         if duration < 0 { return; } // Expired
 
-        // Get server RCON credentials
-        let creds = match sqlx::query_as::<_, (String, i32, String)>(
-            "SELECT ip, rcon_port, rcon_password FROM servers WHERE id=$1"
-        ).bind(server_id).fetch_optional(&self.pool).await {
-            Ok(Some(c)) => c,
-            _ => return,
-        };
-        let (ip, port, password) = creds;
-
         let duration_str = if duration == 0 { "永久封禁".to_string() } else { format!("{}分钟", duration) };
         let kick_reason = format!("您已被封禁 ({}): {}", duration_str, reason);
 
-        // Kick the player
+        // Kick the player via server_id
         let kick_cmd = format!("AdminKick \"{}\" \"{}\"", steam_id, kick_reason);
-        match self.rcon_pool.execute(&ip, port as u16, &password, &kick_cmd).await {
+        match self.rcon_pool.execute_by_server_id_critical(server_id, &kick_cmd).await {
             Ok(_) => {
                 tracing::info!(server_id, steam_id, player = %data.player_name, ban_reason = %reason, "BanEnforcer 已踢出被封玩家");
             }

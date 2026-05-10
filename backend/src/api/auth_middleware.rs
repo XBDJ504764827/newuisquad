@@ -7,6 +7,8 @@ use axum::{
 };
 use jsonwebtoken::{decode, DecodingKey, Validation};
 use crate::api::auth::Claims;
+use crate::api::AppState;
+use std::time::Instant;
 
 #[derive(Clone)]
 pub struct AuthenticatedUser {
@@ -24,10 +26,19 @@ fn extract_token_from_query(uri: &axum::http::Uri) -> Option<String> {
     })
 }
 
-/// 认证中间件：验证 JWT 并将用户信息注入 request extensions
+/// 缓存条目：版本号 + 写入时间
+pub struct CacheEntry {
+    pub version: i32,
+    pub created_at: Instant,
+}
+
+const CACHE_TTL_SECS: u64 = 60;
+
+/// 认证中间件：验证 JWT 并校验权限版本号
 /// 支持两种 token 传递方式：Authorization: Bearer 头（常规 API）和 ?token= 查询参数（WebSocket 降级）
 pub async fn require_auth(
     Extension(secret): Extension<String>,
+    Extension(app_state): Extension<AppState>,
     mut request: axum::http::Request<axum::body::Body>,
     next: Next,
 ) -> Result<Response, StatusCode> {
@@ -50,13 +61,65 @@ pub async fn require_auth(
     let data = decode::<Claims>(&token, &DecodingKey::from_secret(secret.as_bytes()), &validation)
         .map_err(|_| StatusCode::UNAUTHORIZED)?;
 
+    let claims = &data.claims;
+
+    // 3. 校验权限版本号
+    let db_version = get_permission_version(&app_state, &claims.username).await
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+
+    if claims.permission_version != db_version {
+        // 版本不匹配 → 权限已变更，拒绝旧 token
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
     request.extensions_mut().insert(AuthenticatedUser {
-        username: data.claims.username,
-        role: data.claims.role,
-        permissions: data.claims.permissions,
+        username: claims.username.clone(),
+        role: claims.role.clone(),
+        permissions: claims.permissions.clone(),
     });
 
     Ok(next.run(request).await)
+}
+
+/// 获取用户的权限版本号（内存缓存 + DB 回退）
+async fn get_permission_version(state: &AppState, username: &str) -> Result<i32, String> {
+    let now = Instant::now();
+
+    // 先查缓存
+    {
+        let cache = state.permission_version_cache.read().await;
+        if let Some(entry) = cache.get(username) {
+            if now.duration_since(entry.created_at).as_secs() < CACHE_TTL_SECS {
+                return Ok(entry.version);
+            }
+        }
+    }
+
+    // 缓存未命中或已过期 → 查 DB
+    let row = sqlx::query_as::<_, (i32,)>(
+        "SELECT permission_version FROM admin_users WHERE username=$1"
+    ).bind(username).fetch_optional(&state.pool).await
+        .map_err(|e| format!("查询权限版本失败: {}", e))?;
+
+    let version = match row {
+        Some((v,)) => v,
+        None => return Err("用户不存在".to_string()),
+    };
+
+    // 写入缓存
+    {
+        let mut cache = state.permission_version_cache.write().await;
+        cache.insert(username.to_string(), CacheEntry {
+            version,
+            created_at: now,
+        });
+        // 缓存清理：超过 1000 条时清除过期条目
+        if cache.len() > 1000 {
+            cache.retain(|_, entry| now.duration_since(entry.created_at).as_secs() < CACHE_TTL_SECS);
+        }
+    }
+
+    Ok(version)
 }
 
 /// 提取器：从 extensions 中读取中间件注入的用户信息（仅用于需要用户信息的 handler）

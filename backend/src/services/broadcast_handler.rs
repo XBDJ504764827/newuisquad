@@ -87,20 +87,20 @@ pub fn start_broadcast_handler(
             sleep(Duration::from_secs(30)).await;
             let now = chrono::Utc::now();
 
-            let rows = match sqlx::query_as::<_, (i32, String, i32, String, bool, String, i32)>(
-                "SELECT s.id, s.ip, s.rcon_port, s.rcon_password, bc.announcement_enabled, bc.announcement_content, bc.announcement_interval FROM servers s JOIN broadcast_settings bc ON s.id = bc.server_id"
+            let rows = match sqlx::query_as::<_, (i32, bool, String, i32)>(
+                "SELECT s.id, bc.announcement_enabled, bc.announcement_content, bc.announcement_interval FROM servers s JOIN broadcast_settings bc ON s.id = bc.server_id"
             ).fetch_all(&pool_for_timer).await {
                 Ok(r) => r,
                 Err(_) => continue,
             };
 
-            for (sid, ip, rcon_port, rcon_pass, bc_enabled, bc_content, bc_interval) in &rows {
+            for (sid, bc_enabled, bc_content, bc_interval) in &rows {
                 if *bc_enabled && !bc_content.is_empty() && *bc_interval > 0 {
                     let entry = last_sent.entry(-*sid).or_insert_with(|| now - chrono::Duration::minutes(*bc_interval as i64));
                     let elapsed = now - *entry;
                     if elapsed.num_minutes() >= *bc_interval as i64 {
                         let cmd = format!("AdminBroadcast \"{}\"", bc_content);
-                        if let Err(e) = send_rcon(&pool_for_timer_rcon, &ip, *rcon_port as u16, &rcon_pass, &cmd).await {
+                        if let Err(e) = send_rcon(&pool_for_timer_rcon, *sid, &cmd).await {
                             tracing::error!(server_id = *sid, error = %e, "定时通告发送失败");
                         } else {
                             tracing::info!(server_id = *sid, "已发送定时通告");
@@ -111,14 +111,14 @@ pub fn start_broadcast_handler(
             }
 
             // 处理 announcements 多条通告
-            let ann_configs = match sqlx::query_as::<_, (i32, String, i32, String)>(
-                "SELECT DISTINCT a.server_id, s.ip, s.rcon_port, s.rcon_password FROM announcements a JOIN servers s ON s.id = a.server_id WHERE a.enabled = true"
+            let ann_configs = match sqlx::query_as::<_, (i32,)>(
+                "SELECT DISTINCT a.server_id FROM announcements a JOIN servers s ON s.id = a.server_id WHERE a.enabled = true"
             ).fetch_all(&pool_for_timer).await {
                 Ok(r) => r,
                 Err(_) => continue,
             };
 
-            for (sid, ip, rcon_port, rcon_pass) in &ann_configs {
+            for (sid,) in &ann_configs {
                 let entry = last_sent.entry(*sid).or_insert_with(|| now - chrono::Duration::minutes(5));
                 let elapsed = now - *entry;
                 if elapsed.num_minutes() < 5 {
@@ -131,7 +131,7 @@ pub fn start_broadcast_handler(
                     for (_id, content, interval) in &anns {
                         if *interval > 0 {
                             let cmd = format!("AdminBroadcast \"{}\"", content);
-                            let _ = send_rcon(&pool_for_timer_rcon, &ip, *rcon_port as u16, &rcon_pass, &cmd).await;
+                            let _ = send_rcon(&pool_for_timer_rcon, *sid, &cmd).await;
                         }
                     }
                 }
@@ -152,22 +152,22 @@ pub fn start_broadcast_handler(
                     let server_id = entry.server_id;
                     if server_id == 0 { continue; }
 
-                    let bc_config = match sqlx::query_as::<_, (String, i32, String, bool, String, bool, String)>(
-                        "SELECT s.ip, s.rcon_port, s.rcon_password, bc.join_message_enabled, bc.join_message, bc.gameop_list_enabled, bc.gameop_list_message FROM servers s JOIN broadcast_settings bc ON s.id = bc.server_id WHERE s.id = $1"
+                    let bc_config = match sqlx::query_as::<_, (bool, String, bool, String)>(
+                        "SELECT bc.join_message_enabled, bc.join_message, bc.gameop_list_enabled, bc.gameop_list_message FROM broadcast_settings bc WHERE bc.server_id = $1"
                     ).bind(server_id).fetch_optional(&runtime_pool).await {
                         Ok(Some(c)) => c,
                         Ok(None) => continue,
                         Err(_) => continue,
                     };
 
-                    let (ip, rcon_port, rcon_pass, join_enabled, join_msg, op_enabled, op_msg) = bc_config;
+                    let (join_enabled, join_msg, op_enabled, op_msg) = bc_config;
 
                     // 1. 玩家进入提醒
                     if join_enabled {
                         if let Some((player_name, _)) = parse_player_join(raw) {
                             let welcome = join_msg.replace("{player}", &player_name);
                             let cmd = format!("AdminBroadcast \"{}\"", welcome);
-                            match send_rcon(&runtime_rcon, &ip, rcon_port as u16, &rcon_pass, &cmd).await {
+                            match send_rcon(&runtime_rcon, server_id, &cmd).await {
                                 Ok(_) => tracing::info!(server_id, player = %player_name, "已发送欢迎消息"),
                                 Err(e) => tracing::error!(server_id, error = %e, "欢迎消息发送失败"),
                             }
@@ -195,7 +195,7 @@ pub fn start_broadcast_handler(
                             ).await {
                                 if let Some(action) = automod.determine_action(server_id, violation_count) {
                                     let cmd = automod.build_rcon_command(&action, &player_name, steam_id);
-                                    let _ = send_rcon(&runtime_rcon, &ip, rcon_port as u16, &rcon_pass, &cmd).await;
+                                    let _ = send_rcon(&runtime_rcon, server_id, &cmd).await;
                                     tracing::info!(server_id, player = %player_name, violation = violation_count,
                                         category = %filter_match.category.as_str(), word = %filter_match.matched_word,
                                         action = %action.action, "聊天审核触发");
@@ -219,7 +219,7 @@ pub fn start_broadcast_handler(
                                         let oplist = if list.is_empty() { "当前暂无在线管理员".to_string() } else { list.join(", ") };
                                         let reply = op_msg.replace("{oplist}", &oplist);
                                         let cmd = format!("AdminWarn \"{}\" \"{}\"", player_name, reply);
-                                        let _ = send_rcon(&runtime_rcon, &ip, rcon_port as u16, &rcon_pass, &cmd).await;
+                                        let _ = send_rcon(&runtime_rcon, server_id, &cmd).await;
                                         tracing::info!(server_id, player = %player_name, "已回复OP列表");
                                     }
                                     Err(_) => {}
@@ -235,7 +235,7 @@ pub fn start_broadcast_handler(
                             for (keyword, reply_message) in &replies {
                                 if lower_msg.contains(&keyword.to_lowercase()) {
                                     let cmd = format!("AdminBroadcast \"{}\"", reply_message);
-                                    let _ = send_rcon(&runtime_rcon, &ip, rcon_port as u16, &rcon_pass, &cmd).await;
+                                    let _ = send_rcon(&runtime_rcon, server_id, &cmd).await;
                                     tracing::info!(server_id, player = %player_name, keyword, "已自动回复（广播）");
                                     break;
                                 }
@@ -252,7 +252,7 @@ pub fn start_broadcast_handler(
     })
 }
 
-async fn send_rcon(pool: &RconPool, ip: &str, port: u16, password: &str, command: &str) -> Result<(), String> {
-    pool.execute(ip, port, password, command).await?;
+async fn send_rcon(pool: &RconPool, server_id: i32, command: &str) -> Result<(), String> {
+    pool.execute_by_server_id(server_id, command).await?;
     Ok(())
 }

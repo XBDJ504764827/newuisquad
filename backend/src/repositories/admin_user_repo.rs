@@ -36,7 +36,7 @@ pub async fn update(
     let Some(c) = current else { return Ok(None) };
 
     sqlx::query_as::<_, AdminUser>(
-        "UPDATE admin_users SET username=$1, password_hash=$2, role=$3, permissions=$4, steam_id64=$5, notes=$6, updated_at=NOW() WHERE id=$7 RETURNING *"
+        "UPDATE admin_users SET username=$1, password_hash=$2, role=$3, permissions=$4, steam_id64=$5, notes=$6, permission_version = permission_version + 1, updated_at=NOW() WHERE id=$7 RETURNING *"
     )
     .bind(username.unwrap_or(&c.username))
     .bind(password_hash.unwrap_or(&c.password_hash))

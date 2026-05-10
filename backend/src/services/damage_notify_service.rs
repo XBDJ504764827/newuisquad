@@ -592,17 +592,9 @@ async fn process_apology(
 
 // ═══ RCON 辅助函数（通过连接池复用连接） ═══
 
-async fn send_rcon_cmd(pool: &PgPool, server_id: i32, cmd: &str, rcon_pool: &RconPool) {
-    let creds = match sqlx::query_as::<_, (String, i32, String)>(
-        "SELECT ip, rcon_port, rcon_password FROM servers WHERE id = $1"
-    ).bind(server_id).fetch_optional(pool).await {
-        Ok(Some(c)) => c,
-        _ => return,
-    };
-    let (ip, port, password) = creds;
-    if password.is_empty() { return; }
-    match rcon_pool.execute(&ip, port as u16, &password, cmd).await {
+async fn send_rcon_cmd(_pool: &PgPool, server_id: i32, cmd: &str, rcon_pool: &RconPool) {
+    match rcon_pool.execute_by_server_id(server_id, cmd).await {
         Ok(_) => {}
-        Err(e) => tracing::warn!(%ip, %port, %e, "RCON 命令执行失败"),
+        Err(e) => tracing::warn!(server_id, %e, "RCON 命令执行失败"),
     }
 }

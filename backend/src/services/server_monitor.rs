@@ -99,24 +99,25 @@ impl ServerMonitor {
 
     /// Check all servers
     async fn check_all_servers(&self) {
-        let servers = match sqlx::query_as::<_, (i32, String, String, String, i32, String)>(
-            "SELECT id, server_id, name, ip, rcon_port, rcon_password FROM servers ORDER BY id"
+        let servers = match sqlx::query_as::<_, (i32,)>(
+            "SELECT id FROM servers ORDER BY id"
         ).fetch_all(&self.pool).await {
             Ok(s) => s,
             Err(_) => return,
         };
 
-        for (id, _server_id, _name, ip, rcon_port, _password) in &servers {
-            let health = self.check_server(*id, ip, *rcon_port as u16).await;
+        for (id,) in &servers {
+            let health = self.check_server(*id).await;
             let mut states = self.health_states.write().await;
             states.insert(*id, health);
         }
     }
 
     /// Check a single server's health
-    async fn check_server(&self, server_id: i32, ip: &str, port: u16) -> ServerHealth {
+    async fn check_server(&self, server_id: i32) -> ServerHealth {
         let now = chrono::Utc::now();
-        let rcon_healthy = self.rcon_pool.is_healthy(ip, port).await;
+        // 通过 execute_by_server_id 测试连接健康
+        let rcon_healthy = self.rcon_pool.execute_by_server_id(server_id, "ListPlayers").await.is_ok();
 
         let (player_count, map_name) = if rcon_healthy {
             self.get_live_info(server_id).await
@@ -147,21 +148,11 @@ impl ServerMonitor {
     }
 
     async fn get_live_info(&self, server_id: i32) -> (Option<usize>, Option<String>) {
-        // Check PlayerTracker first
-        // (we can't directly access it from here, but we can check if the server responded to RCON)
-
-        // Try RCON pool health as proxy
-        let creds = sqlx::query_as::<_, (String, i32, String)>(
-            "SELECT ip, rcon_port, rcon_password FROM servers WHERE id=$1"
-        ).bind(server_id).fetch_optional(&self.pool).await.ok().flatten();
-
-        if let Some((ip, port, password)) = creds {
-            if let Ok(raw) = self.rcon_pool.execute(&ip, port as u16, &password, "ListPlayers").await {
-                let player_count = raw.lines()
-                    .filter(|l| !l.trim().is_empty() && !l.starts_with("-----") && !l.starts_with("Active"))
-                    .count();
-                return (Some(player_count), None);
-            }
+        if let Ok(raw) = self.rcon_pool.execute_by_server_id(server_id, "ListPlayers").await {
+            let player_count = raw.lines()
+                .filter(|l| !l.trim().is_empty() && !l.starts_with("-----") && !l.starts_with("Active"))
+                .count();
+            return (Some(player_count), None);
         }
         (None, None)
     }

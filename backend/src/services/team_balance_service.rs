@@ -156,27 +156,19 @@ impl TeamBalanceService {
 
     /// Execute team scramble
     pub async fn execute_scramble(&self, server_id: i32) -> ScrambleResult {
-        let creds = match sqlx::query_as::<_, (String, i32, String)>(
-            "SELECT ip, rcon_port, rcon_password FROM servers WHERE id=$1"
-        ).bind(server_id).fetch_optional(&self.pool).await.ok().flatten() {
-            Some(c) => c,
-            None => return ScrambleResult { success: false, players_moved: 0, message: "服务器不存在".into() },
-        };
-        let (ip, port, password) = creds;
-
         // Announce scramble
-        let _ = self.rcon_pool.execute(&ip, port as u16, &password,
+        let _ = self.rcon_pool.execute_by_server_id(server_id,
             "AdminBroadcast 阵营洗牌即将开始！系统检测到实力不均衡，将在15秒后重组队伍...").await;
 
         // Count down
         for remaining in [10, 5, 3].iter() {
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-            let _ = self.rcon_pool.execute(&ip, port as u16, &password,
+            let _ = self.rcon_pool.execute_by_server_id(server_id,
                 &format!("AdminBroadcast 阵营洗牌倒计时 {} 秒...", remaining)).await;
         }
 
         // Get players via RCON
-        let players_raw = match self.rcon_pool.execute(&ip, port as u16, &password, "ListPlayers").await {
+        let players_raw = match self.rcon_pool.execute_by_server_id(server_id, "ListPlayers").await {
             Ok(r) => r,
             Err(e) => return ScrambleResult { success: false, players_moved: 0, message: format!("获取玩家列表失败: {}", e) },
         };
@@ -211,7 +203,7 @@ impl TeamBalanceService {
         // Select players to swap (half of the smaller team rounded up)
         let swap_count = (team1.len().min(team2.len()) as f64 * 0.5).ceil() as usize;
         if swap_count == 0 {
-            let _ = self.rcon_pool.execute(&ip, port as u16, &password,
+            let _ = self.rcon_pool.execute_by_server_id(server_id,
                 "AdminBroadcast 阵营洗牌失败：玩家不足").await;
             return ScrambleResult { success: false, players_moved: 0, message: "玩家不足".into() };
         }
@@ -223,7 +215,7 @@ impl TeamBalanceService {
         let mut moved = 0i32;
         for (pid, _name) in team1_swap.iter().chain(team2_swap.iter()) {
             let cmd = format!("AdminForceTeamChangeById {}", pid);
-            if self.rcon_pool.execute(&ip, port as u16, &password, &cmd).await.is_ok() {
+            if self.rcon_pool.execute_by_server_id(server_id, &cmd).await.is_ok() {
                 moved += 1;
             }
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
@@ -231,7 +223,7 @@ impl TeamBalanceService {
 
         // Broadcast result
         let result_msg = format!("阵营洗牌完成！已调整 {} 名玩家", moved);
-        let _ = self.rcon_pool.execute(&ip, port as u16, &password,
+        let _ = self.rcon_pool.execute_by_server_id(server_id,
             &format!("AdminBroadcast {}", result_msg)).await;
 
         // Reset state

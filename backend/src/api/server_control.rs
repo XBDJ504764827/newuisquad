@@ -24,11 +24,7 @@ pub async fn get_bans(
     State(state): State<AppState>,
     Path(server_id): Path<i32>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let row = sqlx::query_as::<_, (String, i32, String)>(
-        "SELECT ip, rcon_port, rcon_password FROM servers WHERE id=$1"
-    ).bind(server_id).fetch_optional(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let (ip, port, password) = match row { Some(r) => r, None => return Ok(Json(serde_json::json!({ "error": "服务器不存在" }))) };
-    match rcon_server_info::get_bans(&state.rcon_pool, &ip, port as u16, &password).await {
+    match rcon_server_info::get_bans_by_id(&state.rcon_pool, server_id).await {
         Ok(bans) => Ok(Json(serde_json::json!({ "data": bans }))),
         Err(e) => Ok(Json(serde_json::json!({ "error": e }))),
     }
@@ -39,11 +35,7 @@ pub async fn get_warns(
     State(state): State<AppState>,
     Path(server_id): Path<i32>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let row = sqlx::query_as::<_, (String, i32, String)>(
-        "SELECT ip, rcon_port, rcon_password FROM servers WHERE id=$1"
-    ).bind(server_id).fetch_optional(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let (ip, port, password) = match row { Some(r) => r, None => return Ok(Json(serde_json::json!({ "error": "服务器不存在" }))) };
-    match rcon_server_info::get_warns(&state.rcon_pool, &ip, port as u16, &password).await {
+    match rcon_server_info::get_warns_by_id(&state.rcon_pool, server_id).await {
         Ok(warns) => Ok(Json(serde_json::json!({ "data": warns }))),
         Err(e) => Ok(Json(serde_json::json!({ "error": e }))),
     }
@@ -83,11 +75,7 @@ pub async fn get_server_info(
         }
 
     // 回退到直接 RCON
-    let row = sqlx::query_as::<_, (String, i32, String)>(
-        "SELECT ip, rcon_port, rcon_password FROM servers WHERE id=$1"
-    ).bind(server_id).fetch_optional(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let (ip, port, password) = match row { Some(r) => r, None => return Ok(Json(serde_json::json!({ "error": "服务器不存在" }))) };
-    match rcon_server_info::get_server_info(&state.rcon_pool, &ip, port as u16, &password).await {
+    match rcon_server_info::get_server_info_by_id(&state.rcon_pool, server_id).await {
         Ok(info) => Ok(Json(serde_json::json!(info))),
         Err(e) => Ok(Json(serde_json::json!({ "error": e }))),
     }
@@ -125,16 +113,7 @@ pub async fn get_server_state(
 
     // 回退到直接 RCON
     tracing::info!(server_id, "缓存未命中，回退到直接 RCON 查询");
-    let row = sqlx::query_as::<_, (String, i32, String)>(
-        "SELECT ip, rcon_port, rcon_password FROM servers WHERE id=$1"
-    ).bind(server_id).fetch_optional(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let (ip, port, password) = match row {
-        Some(r) => r,
-        None => return Ok(Json(serde_json::json!({ "error": "服务器不存在" }))),
-    };
-
-    match rcon_server_info::get_server_state(&state.rcon_pool, &ip, port as u16, &password).await {
+    match rcon_server_info::get_server_state_by_id(&state.rcon_pool, server_id).await {
         Ok(s) => {
             Ok(Json(serde_json::json!({
                 "players": s.players.iter().map(|p| serde_json::json!({
@@ -162,15 +141,6 @@ pub async fn player_action(
     Path(server_id): Path<i32>,
     Json(req): Json<PlayerAction>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let row = sqlx::query_as::<_, (String, i32, String)>(
-        "SELECT ip, rcon_port, rcon_password FROM servers WHERE id=$1"
-    ).bind(server_id).fetch_optional(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let (ip, port, password) = match row {
-        Some(r) => r,
-        None => return Ok(Json(serde_json::json!({ "error": "服务器不存在" }))),
-    };
-
     // 构建目标标识符
     // 警告优先 SteamID，踢出优先 PlayerID（AdminKickById 更可靠）
     let (target, is_pid) = match req.action.as_str() {
@@ -218,7 +188,7 @@ pub async fn player_action(
         _ => return Ok(Json(serde_json::json!({ "error": "未知操作" }))),
     };
 
-    match state.rcon_pool.execute(&ip, port as u16, &password, &cmd).await {
+    match state.rcon_pool.execute_by_server_id(server_id, &cmd).await {
         Ok(resp) => {
             tracing::info!(server_id, admin = %req.admin_user, action = %req.action, target = %req.player_name, cmd = %cmd, resp = %resp, "玩家操作执行成功");
             system_log::backend_info(&state.pool, "player_action", &format!("{} 对 {} 执行 {} [{}]", req.admin_user, req.player_name, req.action, cmd)).await;
@@ -233,17 +203,8 @@ pub async fn disband_squad(
     State(state): State<AppState>,
     Path((server_id, team_id, squad_id)): Path<(i32, i32, String)>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let row = sqlx::query_as::<_, (String, i32, String)>(
-        "SELECT ip, rcon_port, rcon_password FROM servers WHERE id=$1"
-    ).bind(server_id).fetch_optional(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let (ip, port, password) = match row {
-        Some(r) => r,
-        None => return Ok(Json(serde_json::json!({ "error": "服务器不存在" }))),
-    };
-
     let cmd = format!("AdminDisbandSquad {} {}", team_id, squad_id);
-    match state.rcon_pool.execute(&ip, port as u16, &password, &cmd).await {
+    match state.rcon_pool.execute_by_server_id(server_id, &cmd).await {
         Ok(resp) => Ok(Json(serde_json::json!({ "success": true, "response": resp }))),
         Err(e) => Ok(Json(serde_json::json!({ "error": format!("执行失败: {}", e) }))),
     }

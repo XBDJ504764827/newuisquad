@@ -169,8 +169,8 @@ impl PlayerTracker {
     // ═══ Internal ═══
 
     async fn refresh_all_servers(&self) {
-        let servers = match sqlx::query_as::<_, (i32, String, i32, String)>(
-            "SELECT id, ip, rcon_port, rcon_password FROM servers WHERE rcon_port > 0 AND rcon_password != ''"
+        let servers = match sqlx::query_as::<_, (i32,)>(
+            "SELECT id FROM servers WHERE rcon_port > 0 AND rcon_password != ''"
         ).fetch_all(&self.pool).await {
             Ok(s) => s,
             Err(e) => {
@@ -179,29 +179,22 @@ impl PlayerTracker {
             }
         };
 
-        for (id, ip, port, password) in &servers {
-            self.refresh_server_inner(*id, ip, *port as u16, password).await;
+        for (id,) in &servers {
+            self.refresh_server_inner(*id).await;
         }
     }
 
     async fn refresh_server(&self, server_id: i32) {
-        let creds = match sqlx::query_as::<_, (String, i32, String)>(
-            "SELECT ip, rcon_port, rcon_password FROM servers WHERE id=$1"
-        ).bind(server_id).fetch_optional(&self.pool).await {
-            Ok(Some(c)) => c,
-            _ => return,
-        };
-        let (ip, port, password) = creds;
-        self.refresh_server_inner(server_id, &ip, port as u16, &password).await;
+        self.refresh_server_inner(server_id).await;
     }
 
-    async fn refresh_server_inner(&self, server_id: i32, ip: &str, port: u16, password: &str) {
+    async fn refresh_server_inner(&self, server_id: i32) {
         let now = chrono::Utc::now();
 
-        // Get players, squads, and map info via RCON pool
-        let players_fut = rcon_server_info::list_players(&self.rcon_pool, ip, port, password);
-        let squads_fut = rcon_server_info::list_squads(&self.rcon_pool, ip, port, password);
-        let map_fut = rcon_server_info::get_map(&self.rcon_pool, ip, port, password);
+        // Get players, squads, and map info via RCON pool (by server_id)
+        let players_fut = rcon_server_info::list_players_by_id(&self.rcon_pool, server_id);
+        let squads_fut = rcon_server_info::list_squads_by_id(&self.rcon_pool, server_id);
+        let map_fut = rcon_server_info::get_map_by_id(&self.rcon_pool, server_id);
 
         let (players_result, squads_result, map_result) = tokio::join!(players_fut, squads_fut, map_fut);
 

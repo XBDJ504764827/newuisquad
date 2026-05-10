@@ -34,6 +34,13 @@ impl RateLimiterInner {
             false
         } else {
             timestamps.push(now);
+            // 内存清理：条目数超过 10000 时清除过期 IP
+            if map.len() > 10000 {
+                map.retain(|_, ts| {
+                    ts.retain(|t| now.duration_since(*t) < window);
+                    !ts.is_empty()
+                });
+            }
             true
         }
     }

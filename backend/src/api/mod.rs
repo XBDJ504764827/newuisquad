@@ -41,6 +41,7 @@ use tokio::sync::broadcast;
 use crate::models::server_log::LogEntry;
 use crate::api::agent_ws::AgentPool;
 use crate::api::rate_limiter::RateLimiterState;
+use crate::api::auth_middleware::CacheEntry;
 use crate::services::log_batcher::LogBatcher;
 
 #[derive(Clone)]
@@ -71,6 +72,8 @@ pub struct AppState {
     pub team_balance: Option<Arc<crate::services::team_balance_service::TeamBalanceService>>,
     pub afk_service: Option<Arc<crate::services::afk_service::AfkService>>,
     pub event_manager: Option<Arc<crate::services::event_manager::EventManager>>,
+    // 权限版本号缓存 (username -> CacheEntry)
+    pub permission_version_cache: Arc<tokio::sync::RwLock<std::collections::HashMap<String, CacheEntry>>>,
 }
 
 pub fn build_router(state: AppState) -> Router {
@@ -186,4 +189,5 @@ pub fn build_router(state: AppState) -> Router {
         .with_state(state.clone())
         .layer(axum::Extension(state.rate_limiter.clone()))
         .layer(axum::Extension(state.jwt_secret.clone()))
+        .layer(axum::Extension(state.clone()))
 }
