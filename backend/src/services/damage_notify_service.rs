@@ -117,12 +117,17 @@ struct PlayerTkState {
 
 struct TkTracker {
     players: HashMap<(i32, String), PlayerTkState>,
+    /// 反向索引：(server_id, player_name) -> steam_id，用于道歉时通过玩家名回退匹配
+    name_to_steam: HashMap<(i32, String), String>,
+    /// 反向索引：(server_id, eos_id) -> steam_id，用于聊天ID不一致时回退匹配
+    alt_id_to_steam: HashMap<(i32, String), String>,
 }
 
 impl TkTracker {
-    fn new() -> Self { Self { players: HashMap::new() } }
+    fn new() -> Self { Self { players: HashMap::new(), name_to_steam: HashMap::new(), alt_id_to_steam: HashMap::new() } }
 
-    fn record_tk(&mut self, server_id: i32, steam_id: &str) -> (u32, u64) {
+    /// 记录 TK 并建立反向索引（玩家名 -> steam_id）
+    fn record_tk(&mut self, server_id: i32, steam_id: &str, attacker_name: &str) -> (u32, u64) {
         let key = (server_id, steam_id.to_string());
         let entry = self.players.entry(key.clone()).or_insert_with(|| PlayerTkState {
             tk_count: 0, apology_deadline: None, apologized: false, kicked: false, timer_gen: 0,
@@ -133,7 +138,43 @@ impl TkTracker {
         entry.apology_deadline = None;
         entry.apologized = false;
         entry.timer_gen += 1;
+        // 建立反向索引：name -> steam_id
+        if !attacker_name.is_empty() {
+            self.name_to_steam.insert((server_id, attacker_name.to_string()), steam_id.to_string());
+        }
         (entry.tk_count, entry.timer_gen)
+    }
+
+    /// 注册备用 ID（如 EOS ID）到 steam_id 的映射
+    fn register_alt_id(&mut self, server_id: i32, alt_id: &str, steam_id: &str) {
+        if !alt_id.is_empty() && !steam_id.is_empty() {
+            self.alt_id_to_steam.insert((server_id, alt_id.to_string()), steam_id.to_string());
+        }
+    }
+
+    /// 解析 steam_id：先直接查找，再通过 name 和 alt_id 回退
+    fn resolve_steam_id(&self, server_id: i32, raw_id: &str, player_name: &str) -> Option<String> {
+        // 1. 直接匹配
+        let key = (server_id, raw_id.to_string());
+        if self.players.contains_key(&key) {
+            return Some(raw_id.to_string());
+        }
+        // 2. 通过 alt_id 回退
+        if let Some(steam) = self.alt_id_to_steam.get(&key) {
+            if self.players.contains_key(&(server_id, steam.clone())) {
+                return Some(steam.clone());
+            }
+        }
+        // 3. 通过 name 回退
+        if !player_name.is_empty() {
+            let name_key = (server_id, player_name.to_string());
+            if let Some(steam) = self.name_to_steam.get(&name_key) {
+                if self.players.contains_key(&(server_id, steam.clone())) {
+                    return Some(steam.clone());
+                }
+            }
+        }
+        None
     }
 
     fn mark_apologized(&mut self, server_id: i32, steam_id: &str) -> bool {
@@ -294,7 +335,7 @@ pub fn start_damage_notify(
                     if let Some(event) = crate::services::squad_log_parser::parse_line(raw) {
                         use crate::services::squad_log_parser::ParsedEvent;
                         if let ParsedEvent::KillEvent {
-                            ref attacker_name, ref attacker_steam64,
+                            ref attacker_name, ref attacker_eos, ref attacker_steam64,
                             ref victim_name, damage,
                             ref weapon, ref event_type, ..
                         } = event {
@@ -321,6 +362,12 @@ pub fn start_damage_notify(
                             match same_team {
                                 Some(true) => {
                                     if event_type == "damage" || event_type == "wound" {
+                                        // 注册 EOS->Steam 映射，用于道歉时回退匹配
+                                        if !attacker_eos.is_empty() && !attacker_steam64.is_empty() {
+                                            let mut t = tracker.write().await;
+                                            t.register_alt_id(server_id, attacker_eos, attacker_steam64);
+                                            drop(t);
+                                        }
                                         // 友方误伤
                                         handle_teamkill(
                                             &pool, &tracker, &server_states, server_id,
@@ -355,9 +402,9 @@ pub fn start_damage_notify(
                         }
                     }
 
-                    // 检测道歉消息
-                    if let Some((_player_name, steam_id, message)) = parse_chat(raw) {
-                        process_apology(&pool, &tracker, server_id, &steam_id, &message, &rcon_pool).await;
+                    // 检测道歉消息（传递 player_name 用于回退匹配）
+                    if let Some((player_name, steam_id, message)) = parse_chat(raw) {
+                        process_apology(&pool, &tracker, server_id, &steam_id, &player_name, &message, &rcon_pool).await;
                     }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
@@ -504,10 +551,10 @@ async fn handle_teamkill(
         return;
     }
 
-    // 5. 更新 TK 计数并重置道歉状态
+    // 5. 更新 TK 计数并重置道歉状态（建立 name->steam_id 反向索引）
     let (tk_count, timer_gen) = {
         let mut t = tracker.write().await;
-        t.record_tk(server_id, attacker_steam64)
+        t.record_tk(server_id, attacker_steam64, attacker)
     };
     tracing::info!(server_id, player = %attacker, tk_count, victim = %victim, damage, timer_gen, "误伤事件");
 
@@ -567,6 +614,7 @@ async fn process_apology(
     tracker: &Arc<RwLock<TkTracker>>,
     server_id: i32,
     steam_id: &str,
+    player_name: &str,
     message: &str,
     rcon_pool: &RconPool,
 ) {
@@ -584,10 +632,24 @@ async fn process_apology(
     }
 
     let mut t = tracker.write().await;
+    // 先尝试直接用聊天中解析的 steam_id 匹配
     if t.mark_apologized(server_id, steam_id) {
-        tracing::info!(server_id, %steam_id, "玩家已道歉，取消踢出");
+        tracing::info!(server_id, %steam_id, %player_name, "玩家已道歉（直接匹配），取消踢出");
+        drop(t);
         send_rcon_cmd(pool, server_id, "AdminBroadcast 道歉成功，已取消踢出", rcon_pool).await;
+        return;
     }
+    // 直接匹配失败，通过 resolve_steam_id 回退查找（name / alt_id）
+    if let Some(resolved_steam) = t.resolve_steam_id(server_id, steam_id, player_name) {
+        if resolved_steam != steam_id && t.mark_apologized(server_id, &resolved_steam) {
+            tracing::info!(server_id, %steam_id, resolved = %resolved_steam, %player_name, "玩家已道歉（回退匹配），取消踢出");
+            drop(t);
+            send_rcon_cmd(pool, server_id, "AdminBroadcast 道歉成功，已取消踢出", rcon_pool).await;
+            return;
+        }
+    }
+    // 均未匹配到（玩家未在 pending 状态）
+    tracing::debug!(server_id, %steam_id, %player_name, "收到道歉关键字但未匹配到 pending 状态");
 }
 
 // ═══ RCON 辅助函数（通过连接池复用连接） ═══
