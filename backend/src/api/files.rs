@@ -87,6 +87,10 @@ pub async fn write_file(
                 .bind(&req.content)
                 .execute(&state.pool)
                 .await;
+                // Auto-save config file history
+                crate::api::audit_config::save_config_history(
+                    &state.pool, server_id, &req.path, &req.content, &req.admin_user,
+                ).await;
                 Ok(Json(serde_json::json!({ "success": true })))
             } else {
                 Ok(Json(serde_json::json!({ "error": error })))

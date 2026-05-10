@@ -49,11 +49,22 @@ export type PageId =
   | 'match-logs'
   | 'config-file'
   | 'config-panel'
-  | 'action-logs'
   | 'player-info'
   | 'admin-users'
-  | 'permission-settings'
-  | 'ban-management';
+  | 'ban-management'
+  | 'audit-dashboard'
+  | 'player-detail'
+  | 'motd'
+  | 'workflows'
+  | 'rcon-console'
+  | 'server-metrics'
+  | 'server-feeds'
+  | 'server-rules'
+  | 'server-roles'
+  | 'identity-alts'
+  | 'deployable-events'
+  | 'tick-rate'
+  | 'vehicle-events';
 
 export interface KillEvent {
   id: number;

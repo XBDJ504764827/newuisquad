@@ -38,6 +38,33 @@ async fn main() -> anyhow::Result<()> {
 
     // 启动 RCON 连接池（每连接独立命令队列、优先级、健康检查、自动重连）
     let rcon_pool = rcon_client::pool::RconPool::new();
+    // 创建事件管理器（所有服务通过它解耦通信）
+    let event_manager = Arc::new(services::event_manager::EventManager::new(10000));
+    // 启动实时玩家追踪服务
+    let player_tracker = Arc::new(services::player_tracker::PlayerTracker::new(pool.clone(), rcon_pool.clone(), Some(event_manager.clone())));
+    let pt_handle = player_tracker.clone().start();
+    // 初始化聊天审核服务
+    let chat_automod = Arc::new(tokio::sync::RwLock::new(services::chat_automod::ChatAutomod::new()));
+    {
+        let mut ca = chat_automod.write().await;
+        ca.load_settings(&pool).await;
+        ca.refresh_admin_cache(&pool).await;
+    }
+    // 启动服务器健康监控
+    let server_monitor = Arc::new(services::server_monitor::ServerMonitor::new(pool.clone(), rcon_pool.clone()));
+    let sm_handle = server_monitor.clone().start();
+    // 启动播种模式服务
+    let seeding_service = Arc::new(services::seeding_service::SeedModeService::new(pool.clone(), rcon_pool.clone()));
+    let seed_handle = seeding_service.clone().start();
+    // 初始化队伍平衡服务
+    let team_balance = Arc::new(services::team_balance_service::TeamBalanceService::new(pool.clone(), rcon_pool.clone()));
+    // 启动 AFK 管理服务
+    let afk_service = Arc::new(services::afk_service::AfkService::new(pool.clone(), rcon_pool.clone()));
+    let afk_handle = afk_service.clone().start();
+    // 启动 Ban 强制执行器（订阅玩家连接事件自动踢出）
+    let ban_enforcer = Arc::new(services::ban_enforcer::BanEnforcer::new(pool.clone(), rcon_pool.clone()));
+    let ban_rx = event_manager.subscribe();
+    let ban_handle = ban_enforcer.start(ban_rx);
 
     let state = api::AppState {
         pool: pool.clone(),
@@ -50,10 +77,17 @@ async fn main() -> anyhow::Result<()> {
         log_batcher,
         rate_limiter: api::rate_limiter::RateLimiterState::new(),
         rcon_pool: rcon_pool.clone(),
+        player_tracker: Some(player_tracker.clone()),
+        chat_automod: Some(chat_automod.clone()),
+        server_monitor: Some(server_monitor.clone()),
+        seeding_service: Some(seeding_service.clone()),
+        team_balance: Some(team_balance.clone()),
+        afk_service: Some(afk_service.clone()),
+        event_manager: Some(event_manager.clone()),
     };
 
     // 启动广播处理服务
-    let bc_handle = services::broadcast_handler::start_broadcast_handler(pool.clone(), log_rx1, rcon_pool.clone());
+    let bc_handle = services::broadcast_handler::start_broadcast_handler(pool.clone(), log_rx1, rcon_pool.clone(), chat_automod.clone());
     // 启动统一伤害与误伤通知服务
     let server_states_dn = state.server_states.clone();
     let dn_rcon_pool = rcon_pool.clone();
@@ -98,7 +132,7 @@ async fn main() -> anyhow::Result<()> {
     let _ = tokio::time::timeout(
         std::time::Duration::from_secs(10),
         async {
-            let _ = tokio::join!(bc_handle, dn_handle);
+            let _ = tokio::join!(bc_handle, dn_handle, pt_handle, sm_handle, seed_handle, afk_handle, ban_handle);
         }
     ).await;
     tracing::info!("服务已关闭");

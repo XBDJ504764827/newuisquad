@@ -16,11 +16,22 @@ const pageComponents: Record<PageId, React.ComponentType> = {
   'match-logs': dynamic(() => import('./components/pages/MatchLogsPage'), { loading: () => <LoadingPlaceholder /> }),
   'config-file': dynamic(() => import('./components/pages/ConfigFilePage'), { loading: () => <LoadingPlaceholder /> }),
   'config-panel': dynamic(() => import('./components/pages/ConfigPanelPage'), { loading: () => <LoadingPlaceholder /> }),
-  'action-logs': dynamic(() => import('./components/pages/ActionLogsPage'), { loading: () => <LoadingPlaceholder /> }),
   'player-info': dynamic(() => import('./components/pages/PlayerInfoPage'), { loading: () => <LoadingPlaceholder /> }),
   'admin-users': dynamic(() => import('./components/pages/AdminUsersPage'), { loading: () => <LoadingPlaceholder /> }),
-  'permission-settings': dynamic(() => import('./components/pages/PermissionSettingsPage'), { loading: () => <LoadingPlaceholder /> }),
   'ban-management': dynamic(() => import('./components/pages/BanManagementPage'), { loading: () => <LoadingPlaceholder /> }),
+  'audit-dashboard': dynamic(() => import('./components/pages/AuditDashboardPage'), { loading: () => <LoadingPlaceholder /> }),
+  'player-detail': dynamic(() => import('./components/pages/PlayerDetailPage'), { loading: () => <LoadingPlaceholder /> }),
+  'motd': dynamic(() => import('./components/pages/MotdPage'), { loading: () => <LoadingPlaceholder /> }),
+  'workflows': dynamic(() => import('./components/pages/WorkflowsPage'), { loading: () => <LoadingPlaceholder /> }),
+  'rcon-console': dynamic(() => import('./components/pages/RconConsolePage'), { loading: () => <LoadingPlaceholder /> }),
+  'server-metrics': dynamic(() => import('./components/pages/ServerMetricsPage'), { loading: () => <LoadingPlaceholder /> }),
+  'server-feeds': dynamic(() => import('./components/pages/ServerFeedsPage'), { loading: () => <LoadingPlaceholder /> }),
+  'server-rules': dynamic(() => import('./components/pages/ServerRulesPage'), { loading: () => <LoadingPlaceholder /> }),
+  'server-roles': dynamic(() => import('./components/pages/ServerRolesPage'), { loading: () => <LoadingPlaceholder /> }),
+  'identity-alts': dynamic(() => import('./components/pages/IdentityAltsPage'), { loading: () => <LoadingPlaceholder /> }),
+  'deployable-events': dynamic(() => import('./components/pages/ServerEventsPage'), { loading: () => <LoadingPlaceholder /> }),
+  'tick-rate': dynamic(() => import('./components/pages/ServerEventsPage'), { loading: () => <LoadingPlaceholder /> }),
+  'vehicle-events': dynamic(() => import('./components/pages/ServerEventsPage'), { loading: () => <LoadingPlaceholder /> }),
 };
 
 function LoadingPlaceholder() {
@@ -36,19 +47,31 @@ const breadcrumbMap: Record<PageId, { cat: string; page: string }> = {
   'fly-logs': { cat: '日志系统', page: '飞天记录' },
   'kill-logs': { cat: '日志系统', page: '击倒记录' },
   'match-logs': { cat: '日志系统', page: '比赛记录' },
-  'action-logs': { cat: '日志系统', page: '操作记录' },
   'player-info': { cat: '玩家管理', page: '玩家信息' },
   'admin-users': { cat: '玩家管理', page: '网站管理员' },
-  'permission-settings': { cat: '玩家管理', page: '用户权限设置' },
   'ban-management': { cat: '玩家管理', page: '玩家封禁' },
+  'audit-dashboard': { cat: '日志系统', page: '审计仪表盘' },
   'config-file': { cat: '系统配置', page: '配置文件' },
   'config-panel': { cat: '系统配置', page: '配置面板' },
+  'player-detail': { cat: '玩家管理', page: '玩家详情' },
+  'motd': { cat: '系统配置', page: 'MOTD 配置' },
+  'workflows': { cat: '系统配置', page: '工作流管理' },
+  'rcon-console': { cat: '服务器管理', page: 'RCON控制台' },
+  'server-metrics': { cat: '服务器管理', page: '性能指标' },
+  'server-feeds': { cat: '服务器管理', page: '实时信息' },
+  'server-rules': { cat: '服务器管理', page: '规则管理' },
+  'server-roles': { cat: '服务器管理', page: '用户与角色' },
+  'identity-alts': { cat: '玩家管理', page: '小号检测' },
+  'deployable-events': { cat: '日志系统', page: '工事&事件' },
+  'tick-rate': { cat: '日志系统', page: '服务器性能' },
+  'vehicle-events': { cat: '日志系统', page: '载具记录' },
 };
 
 function getHashPage(): PageId | null {
   if (typeof window === 'undefined') return null;
   const hash = window.location.hash.replace('#', '');
-  return (hash in pageComponents) ? hash as PageId : null;
+  const page = hash.split('?')[0];  // 去掉查询参数
+  return (page in pageComponents) ? page as PageId : null;
 }
 
 export default function Home() {

@@ -61,7 +61,13 @@ export default function PlayerInfoPage() {
             </tr></thead>
             <tbody>{players.map((p, i) => (
               <tr key={p.steam64 || i} style={{ borderBottom: '1px solid var(--border)' }}>
-                <td style={{ padding: '8px 14px', fontWeight: 500 }}>{p.player_name || '-'}</td>
+                <td style={{ padding: '8px 14px', fontWeight: 500 }}>
+                  <a href={`#player-detail?steam64=${encodeURIComponent(p.steam64)}&name=${encodeURIComponent(p.player_name)}`}
+                     style={{ color: 'var(--primary)', textDecoration: 'none', cursor: 'pointer' }}
+                     onClick={e => { e.preventDefault(); window.location.hash = `player-detail?steam64=${encodeURIComponent(p.steam64)}&name=${encodeURIComponent(p.player_name)}`; }}>
+                    {p.player_name || '-'}
+                  </a>
+                </td>
                 <td style={{ padding: '8px 14px', fontFamily: 'monospace', fontSize: 12, color: 'var(--text2)' }}>{p.steam64 || '-'}</td>
                 <td style={{ padding: '8px 14px', fontFamily: 'monospace', fontSize: 11, color: 'var(--text2)' }} title={p.eos_id}>{(p.eos_id || '').slice(0, 16)}...</td>
                 <td style={{ padding: '8px 14px', fontFamily: 'monospace', fontSize: 12 }}>{p.ip || '-'}</td>

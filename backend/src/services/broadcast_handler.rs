@@ -3,6 +3,9 @@ use sqlx::PgPool;
 use tokio::time::{sleep, Duration};
 use crate::models::server_log::LogEntry;
 use crate::rcon_client::pool::RconPool;
+use crate::services::chat_automod::ChatAutomod;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 /// 从日志行解析玩家进入事件
 fn parse_player_join(line: &str) -> Option<(String, String)> {
@@ -71,6 +74,7 @@ pub fn start_broadcast_handler(
     pool: PgPool,
     mut log_rx: tokio::sync::broadcast::Receiver<LogEntry>,
     rcon_pool: RconPool,
+    chat_automod: Arc<RwLock<ChatAutomod>>,
 ) -> tokio::task::JoinHandle<()> {
     tracing::info!("广播处理服务已启动");
 
@@ -136,9 +140,10 @@ pub fn start_broadcast_handler(
         }
     });
 
-    // 主循环：处理日志事件（进入提醒、OP列表、自动回复）
+    // 主循环：处理日志事件（进入提醒、OP列表、自动回复、聊天审核）
     let runtime_pool = pool.clone();
     let runtime_rcon = rcon_pool;
+    let runtime_automod = chat_automod;
     tokio::spawn(async move {
         loop {
             match log_rx.recv().await {
@@ -180,7 +185,28 @@ pub fn start_broadcast_handler(
                     } else {
                         parse_chat(raw)
                     };
-                    if let Some((player_name, _steam_id, message)) = chat_info {
+                    if let Some((player_name, ref steam_id, message)) = chat_info {
+                        // 0. 聊天审核
+                        {
+                            let automod = runtime_automod.read().await;
+                            let chat_channel = entry.category.as_deref().unwrap_or("Chat-All");
+                            if let Some((filter_match, violation_count)) = automod.check_message(
+                                &runtime_pool, server_id, &player_name, steam_id, &message, chat_channel,
+                            ).await {
+                                if let Some(action) = automod.determine_action(server_id, violation_count) {
+                                    let cmd = automod.build_rcon_command(&action, &player_name, steam_id);
+                                    let _ = send_rcon(&runtime_rcon, &ip, rcon_port as u16, &rcon_pass, &cmd).await;
+                                    tracing::info!(server_id, player = %player_name, violation = violation_count,
+                                        category = %filter_match.category.as_str(), word = %filter_match.matched_word,
+                                        action = %action.action, "聊天审核触发");
+                                    automod.record_violation(
+                                        &runtime_pool, server_id, steam_id, &player_name, &message,
+                                        filter_match.category.as_str(), &filter_match.matched_word, &action.action,
+                                    ).await;
+                                }
+                            }
+                        }
+
                         // OP 列表关键字检测
                         if op_enabled {
                             let lower = message.to_lowercase();

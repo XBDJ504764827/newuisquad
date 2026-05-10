@@ -12,4 +12,6 @@ pub mod seed_settings;
 pub mod damage_notify_settings;
 pub mod abnormal_damage;
 pub mod permission;
+pub mod permission_constants;
 pub mod team_switch;
+pub mod workflow;

@@ -25,6 +25,13 @@ pub mod rate_limiter;
 pub mod team_switch;
 pub mod bans;
 pub mod permissions;
+pub mod player_tracker;
+pub mod chat_moderation;
+pub mod server_health;
+pub mod game_services;
+pub mod audit_config;
+pub mod player_profile;
+pub mod workflows;
 
 use axum::{Router, routing::{get, post, put}};
 use axum::middleware::from_fn;
@@ -52,6 +59,18 @@ pub struct AppState {
     pub rate_limiter: RateLimiterState,
     // RCON 连接池
     pub rcon_pool: crate::rcon_client::pool::RconPool,
+    // 实时玩家追踪
+    pub player_tracker: Option<Arc<crate::services::player_tracker::PlayerTracker>>,
+    // 聊天审核
+    pub chat_automod: Option<Arc<tokio::sync::RwLock<crate::services::chat_automod::ChatAutomod>>>,
+    // 服务器健康监控
+    pub server_monitor: Option<Arc<crate::services::server_monitor::ServerMonitor>>,
+    // 播种模式
+    pub seeding_service: Option<Arc<crate::services::seeding_service::SeedModeService>>,
+    // 队伍平衡
+    pub team_balance: Option<Arc<crate::services::team_balance_service::TeamBalanceService>>,
+    pub afk_service: Option<Arc<crate::services::afk_service::AfkService>>,
+    pub event_manager: Option<Arc<crate::services::event_manager::EventManager>>,
 }
 
 pub fn build_router(state: AppState) -> Router {
@@ -100,6 +119,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v1/servers/{id}/explosion-events", get(squad_events::explosion_events))
         .route("/api/v1/servers/{id}/summary", get(server_info::summary))
         .route("/api/v1/servers/{id}/player-info", get(squad_events::player_info))
+        .route("/api/v1/servers/{id}/deployable-events", get(squad_events::deployable_events))
+        .route("/api/v1/servers/{id}/tick-rate-events", get(squad_events::tick_rate_events))
+        .route("/api/v1/servers/{id}/vehicle-events", get(squad_events::vehicle_events))
+        .route("/api/v1/servers/{id}/admin-broadcasts", get(squad_events::admin_broadcasts))
         .route("/api/v1/servers/{id}/chat-messages", get(chat::list))
         .route("/api/v1/servers/{id}/server-state", get(server_control::get_server_state))
         .route("/api/v1/servers/{id}/server-info", get(server_control::get_server_info))
@@ -113,8 +136,45 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v1/servers/{id}/permission-groups/{gid}", put(permissions::update_group).delete(permissions::delete_group))
         .route("/api/v1/servers/{id}/permission-admins", get(permissions::list_admins).post(permissions::create_admin))
         .route("/api/v1/servers/{id}/permission-admins/{aid}", put(permissions::update_admin).delete(permissions::delete_admin))
+        .route("/api/v1/servers/{id}/permission-resolve/{group}", get(permissions::resolve_permissions))
+        .route("/api/v1/permission-catalog", get(permissions::permission_catalog))
+        .route("/api/v1/servers/{id}/permission-groups/{gid}/copy-from-template", post(permissions::copy_from_template))
         .route("/api/v1/servers/{id}/disband-squad/{team_id}/{squad_id}", axum::routing::delete(server_control::disband_squad))
         .route("/api/v1/operation-logs", get(operation_logs::list))
+        .route("/api/v1/players/search", get(player_tracker::search_players))
+        .route("/api/v1/servers/{id}/live-state", get(player_tracker::live_state))
+        .route("/api/v1/servers/{id}/live-players", get(player_tracker::live_players))
+        .route("/api/v1/servers/{id}/live-squads", get(player_tracker::live_squads))
+        .route("/api/v1/servers/{id}/live-teams", get(player_tracker::live_teams))
+        .route("/api/v1/servers/{id}/live-team-players/{team_id}", get(player_tracker::live_team_players))
+        .route("/api/v1/servers/{id}/live-squad-players/{squad_id}", get(player_tracker::live_squad_players))
+        .route("/api/v1/servers/{id}/live-refresh", post(player_tracker::trigger_refresh))
+        .route("/api/v1/servers/{id}/match-summaries", get(player_tracker::match_summaries))
+        .route("/api/v1/servers/{id}/match-players/{match_id}", get(player_tracker::match_player_stats))
+        .route("/api/v1/servers/{id}/chat-moderation-settings", get(chat_moderation::get_settings).put(chat_moderation::update_settings))
+        .route("/api/v1/servers/{id}/chat-violations", get(chat_moderation::list_violations))
+        .route("/api/v1/servers/enhanced", get(server_health::list_enhanced))
+        .route("/api/v1/servers-health", get(server_health::all_health))
+        .route("/api/v1/servers/{id}/health", get(server_health::server_health))
+        .route("/api/v1/servers/{id}/stats", get(server_health::server_stats))
+        .route("/api/v1/servers/{id}/seed-status", get(game_services::seed_status))
+        .route("/api/v1/servers/{id}/team-balance-status", get(game_services::balance_status))
+        .route("/api/v1/servers/{id}/scramble", post(game_services::manual_scramble))
+        .route("/api/v1/audit-stats", get(audit_config::audit_stats))
+        .route("/api/v1/audit-detail", get(audit_config::audit_detail))
+        .route("/api/v1/servers/{id}/config-history", get(audit_config::config_history))
+        .route("/api/v1/servers/{id}/config-history/{version}", get(audit_config::config_history_detail))
+        .route("/api/v1/command-catalog", get(game_services::command_catalog_list))
+        .route("/api/v1/motd/preview", post(game_services::motd_preview))
+        .route("/api/v1/servers/{id}/motd-preview", get(game_services::server_motd_preview))
+        .route("/api/v1/identity/compute", post(game_services::compute_identities))
+        .route("/api/v1/identity/lookup", get(game_services::identity_lookup))
+        .route("/api/v1/identities", get(game_services::identity_list))
+        .route("/api/v1/player-profile/{steam64}", get(player_profile::get_profile))
+        .route("/api/v1/servers/{id}/workflows", get(workflows::list).post(workflows::create))
+        .route("/api/v1/servers/{id}/workflows/{wid}", get(workflows::get_one).put(workflows::update).delete(workflows::delete))
+        .route("/api/v1/servers/{id}/workflows/{wid}/toggle", post(workflows::toggle))
+        .route("/api/v1/servers/{id}/workflows/{wid}/executions", get(workflows::executions))
         .route("/api/v1/admins", get(admin_users::list).post(admin_users::create))
         .route("/api/v1/admins/{id}", put(admin_users::update).delete(admin_users::delete))
         .layer(from_fn(rate_limiter::rate_limit))
