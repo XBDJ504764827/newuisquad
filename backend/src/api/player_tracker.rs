@@ -27,7 +27,7 @@ pub async fn live_state(
     State(state): State<AppState>,
     Path(server_id): Path<i32>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    if let Some(ref tracker) = state.player_tracker {
+    if let Some(ref tracker) = state.game_services.player_tracker {
         if let Some(s) = tracker.get_state(server_id).await {
             return Ok(Json(serde_json::json!(s)));
         }
@@ -46,7 +46,7 @@ pub async fn live_players(
     Path(server_id): Path<i32>,
     Query(q): Query<SearchQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    if let Some(ref tracker) = state.player_tracker {
+    if let Some(ref tracker) = state.game_services.player_tracker {
         if let Some(s) = tracker.get_state(server_id).await {
             let players: Vec<&player_tracker::TrackedPlayer> = if let Some(ref name) = q.name {
                 let lower = name.to_lowercase();
@@ -67,7 +67,7 @@ pub async fn live_squads(
     State(state): State<AppState>,
     Path(server_id): Path<i32>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    if let Some(ref tracker) = state.player_tracker {
+    if let Some(ref tracker) = state.game_services.player_tracker {
         if let Some(s) = tracker.get_state(server_id).await {
             return Ok(Json(serde_json::json!({ "data": s.squads, "total": s.squads.len() })));
         }
@@ -80,7 +80,7 @@ pub async fn live_teams(
     State(state): State<AppState>,
     Path(server_id): Path<i32>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    if let Some(ref tracker) = state.player_tracker {
+    if let Some(ref tracker) = state.game_services.player_tracker {
         if let Some(s) = tracker.get_state(server_id).await {
             return Ok(Json(serde_json::json!({ "data": s.teams, "total": s.teams.len() })));
         }
@@ -93,7 +93,7 @@ pub async fn live_team_players(
     State(state): State<AppState>,
     Path((server_id, team_id)): Path<(i32, i32)>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    if let Some(ref tracker) = state.player_tracker {
+    if let Some(ref tracker) = state.game_services.player_tracker {
         let players = tracker.get_players_by_team(server_id, team_id).await;
         return Ok(Json(serde_json::json!({ "data": players, "total": players.len() })));
     }
@@ -105,7 +105,7 @@ pub async fn live_squad_players(
     State(state): State<AppState>,
     Path((server_id, squad_id)): Path<(i32, String)>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    if let Some(ref tracker) = state.player_tracker {
+    if let Some(ref tracker) = state.game_services.player_tracker {
         let players = tracker.get_players_by_squad(server_id, &squad_id).await;
         return Ok(Json(serde_json::json!({ "data": players, "total": players.len() })));
     }
@@ -118,7 +118,7 @@ pub async fn trigger_refresh(
     State(state): State<AppState>,
     Path(server_id): Path<i32>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    if let Some(ref tracker) = state.player_tracker {
+    if let Some(ref tracker) = state.game_services.player_tracker {
         tracker.force_refresh(server_id).await;
         return Ok(Json(serde_json::json!({ "success": true, "message": "已触发刷新" })));
     }
@@ -131,7 +131,7 @@ pub async fn search_players(
     State(state): State<AppState>,
     Query(q): Query<SearchQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    if let Some(ref tracker) = state.player_tracker {
+    if let Some(ref tracker) = state.game_services.player_tracker {
         if let Some(ref name) = q.name {
             let results = tracker.find_player_by_name(name).await;
             let data: Vec<serde_json::Value> = results.into_iter().map(|(sid, p)| {

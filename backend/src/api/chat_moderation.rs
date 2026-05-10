@@ -118,7 +118,7 @@ pub async fn update_settings(
      .bind(server_id).execute(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Reload automod settings
-    if let Some(ref automod) = state.chat_automod {
+    if let Some(ref automod) = state.game_services.chat_automod {
         automod.write().await.load_settings(&state.pool).await;
     }
 

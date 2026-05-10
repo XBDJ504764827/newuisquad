@@ -77,13 +77,15 @@ async fn main() -> anyhow::Result<()> {
         log_batcher,
         rate_limiter: api::rate_limiter::RateLimiterState::new(),
         rcon_pool: rcon_pool.clone(),
-        player_tracker: Some(player_tracker.clone()),
-        chat_automod: Some(chat_automod.clone()),
-        server_monitor: Some(server_monitor.clone()),
-        seeding_service: Some(seeding_service.clone()),
-        team_balance: Some(team_balance.clone()),
-        afk_service: Some(afk_service.clone()),
-        event_manager: Some(event_manager.clone()),
+        game_services: api::GameServices {
+            player_tracker: Some(player_tracker.clone()),
+            chat_automod: Some(chat_automod.clone()),
+            server_monitor: Some(server_monitor.clone()),
+            seeding_service: Some(seeding_service.clone()),
+            team_balance: Some(team_balance.clone()),
+            afk_service: Some(afk_service.clone()),
+            event_manager: Some(event_manager.clone()),
+        },
         permission_version_cache: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
     };
 

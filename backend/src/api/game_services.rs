@@ -11,7 +11,7 @@ pub async fn seed_status(
     State(state): State<AppState>,
     Path(server_id): Path<i32>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    if let Some(ref svc) = state.seeding_service {
+    if let Some(ref svc) = state.game_services.seeding_service {
         if let Some(mode) = svc.get_mode(server_id).await {
             return Ok(Json(serde_json::json!({
                 "server_id": server_id,
@@ -27,7 +27,7 @@ pub async fn balance_status(
     State(state): State<AppState>,
     Path(server_id): Path<i32>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    if let Some(ref svc) = state.team_balance {
+    if let Some(ref svc) = state.game_services.team_balance {
         if let Some(s) = svc.get_state(server_id).await {
             return Ok(Json(serde_json::json!({
                 "server_id": server_id,
@@ -48,7 +48,7 @@ pub async fn manual_scramble(
     State(state): State<AppState>,
     Path(server_id): Path<i32>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    if let Some(ref svc) = state.team_balance {
+    if let Some(ref svc) = state.game_services.team_balance {
         let result = svc.manual_scramble(server_id).await;
         return Ok(Json(serde_json::json!(result)));
     }
@@ -60,7 +60,7 @@ pub async fn afk_status(
     State(state): State<AppState>,
     Path(server_id): Path<i32>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    if let Some(ref svc) = state.afk_service {
+    if let Some(ref svc) = state.game_services.afk_service {
         let states = svc.get_state(server_id).await;
         let now = chrono::Utc::now();
         let players: Vec<AfkPlayerInfo> = states.into_iter().map(|s| AfkPlayerInfo {

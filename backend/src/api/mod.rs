@@ -44,6 +44,18 @@ use crate::api::rate_limiter::RateLimiterState;
 use crate::api::auth_middleware::CacheEntry;
 use crate::services::log_batcher::LogBatcher;
 
+/// 游戏业务相关的所有后台服务，打包为子结构体减少 AppState 字段数
+#[derive(Clone)]
+pub struct GameServices {
+    pub player_tracker: Option<Arc<crate::services::player_tracker::PlayerTracker>>,
+    pub chat_automod: Option<Arc<tokio::sync::RwLock<crate::services::chat_automod::ChatAutomod>>>,
+    pub server_monitor: Option<Arc<crate::services::server_monitor::ServerMonitor>>,
+    pub seeding_service: Option<Arc<crate::services::seeding_service::SeedModeService>>,
+    pub team_balance: Option<Arc<crate::services::team_balance_service::TeamBalanceService>>,
+    pub afk_service: Option<Arc<crate::services::afk_service::AfkService>>,
+    pub event_manager: Option<Arc<crate::services::event_manager::EventManager>>,
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub pool: PgPool,
@@ -60,18 +72,8 @@ pub struct AppState {
     pub rate_limiter: RateLimiterState,
     // RCON 连接池
     pub rcon_pool: crate::rcon_client::pool::RconPool,
-    // 实时玩家追踪
-    pub player_tracker: Option<Arc<crate::services::player_tracker::PlayerTracker>>,
-    // 聊天审核
-    pub chat_automod: Option<Arc<tokio::sync::RwLock<crate::services::chat_automod::ChatAutomod>>>,
-    // 服务器健康监控
-    pub server_monitor: Option<Arc<crate::services::server_monitor::ServerMonitor>>,
-    // 播种模式
-    pub seeding_service: Option<Arc<crate::services::seeding_service::SeedModeService>>,
-    // 队伍平衡
-    pub team_balance: Option<Arc<crate::services::team_balance_service::TeamBalanceService>>,
-    pub afk_service: Option<Arc<crate::services::afk_service::AfkService>>,
-    pub event_manager: Option<Arc<crate::services::event_manager::EventManager>>,
+    // 游戏业务服务（玩家追踪、聊天审核、健康监控、播种、队伍平衡、AFK、事件管理）
+    pub game_services: GameServices,
     // 权限版本号缓存 (username -> CacheEntry)
     pub permission_version_cache: Arc<tokio::sync::RwLock<std::collections::HashMap<String, CacheEntry>>>,
 }

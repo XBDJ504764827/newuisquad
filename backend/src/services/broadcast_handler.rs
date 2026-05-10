@@ -1,13 +1,95 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 use sqlx::PgPool;
+use tokio::sync::RwLock;
 use tokio::time::{sleep, Duration};
 use crate::models::server_log::LogEntry;
 use crate::rcon_client::pool::RconPool;
 use crate::services::chat_automod::ChatAutomod;
-use std::sync::Arc;
-use tokio::sync::RwLock;
 
-/// 从日志行解析玩家进入事件
+// ════════════════════════════════════════════
+//  广播配置缓存 — 避免每次日志事件查询 DB
+// ════════════════════════════════════════════
+
+/// 每个服务器的广播设置缓存
+#[derive(Clone, Default)]
+struct BcSetting {
+    join_enabled: bool,
+    join_msg: String,
+    op_enabled: bool,
+    op_msg: String,
+    ann_enabled: bool,
+    ann_content: String,
+    ann_interval: i32,
+}
+
+/// 内存缓存，定期从 DB 刷新，热路径零 DB 查询
+#[derive(Clone, Default)]
+struct BroadcastCache {
+    settings: HashMap<i32, BcSetting>,
+    auto_replies: HashMap<i32, Vec<(String, String)>>,
+    announcements: HashMap<i32, Vec<(i32, String, i32)>>,
+    admin_users: Vec<String>,
+}
+
+impl BroadcastCache {
+    /// 从数据库刷新全部缓存
+    async fn refresh(pool: &PgPool) -> Self {
+        let mut cache = BroadcastCache::default();
+
+        // 1. broadcast_settings（合并 JOIN）
+        if let Ok(rows) = sqlx::query_as::<_, (i32, bool, String, bool, String, bool, String, i32)>(
+            "SELECT s.id, bc.join_message_enabled, bc.join_message, \
+             bc.gameop_list_enabled, bc.gameop_list_message, \
+             bc.announcement_enabled, bc.announcement_content, bc.announcement_interval \
+             FROM servers s JOIN broadcast_settings bc ON s.id = bc.server_id"
+        ).fetch_all(pool).await {
+            for (sid, je, jm, oe, om, ae, ac, ai) in rows {
+                cache.settings.insert(sid, BcSetting {
+                    join_enabled: je,
+                    join_msg: jm,
+                    op_enabled: oe,
+                    op_msg: om,
+                    ann_enabled: ae,
+                    ann_content: ac,
+                    ann_interval: ai,
+                });
+            }
+        }
+
+        // 2. 自动回复规则
+        if let Ok(rows) = sqlx::query_as::<_, (i32, String, String)>(
+            "SELECT server_id, keyword, reply_message FROM auto_replies WHERE enabled=true"
+        ).fetch_all(pool).await {
+            for (sid, kw, reply) in rows {
+                cache.auto_replies.entry(sid).or_default().push((kw, reply));
+            }
+        }
+
+        // 3. 多条通告
+        if let Ok(rows) = sqlx::query_as::<_, (i32, i32, String, i32)>(
+            "SELECT server_id, id, content, interval_minutes FROM announcements WHERE enabled=true"
+        ).fetch_all(pool).await {
+            for (sid, id, content, interval) in rows {
+                cache.announcements.entry(sid).or_default().push((id, content, interval));
+            }
+        }
+
+        // 4. 活跃管理员
+        if let Ok(rows) = sqlx::query_as::<_, (String,)>(
+            "SELECT username FROM admin_users WHERE is_active = true ORDER BY id"
+        ).fetch_all(pool).await {
+            cache.admin_users = rows.into_iter().map(|(u,)| u).collect();
+        }
+
+        cache
+    }
+}
+
+// ════════════════════════════════════════════
+//  日志解析（与原逻辑一致）
+// ════════════════════════════════════════════
+
 fn parse_player_join(line: &str) -> Option<(String, String)> {
     let lower = line.to_lowercase();
     if !lower.contains("join") || lower.contains("left") || lower.contains("disconnect") {
@@ -40,7 +122,6 @@ fn parse_player_join(line: &str) -> Option<(String, String)> {
     }
 }
 
-/// 从日志行解析聊天消息
 fn parse_chat(line: &str) -> Option<(String, String, String)> {
     if !line.contains("[Chat]") && !line.to_lowercase().contains("chat") {
         return None;
@@ -70,6 +151,10 @@ fn parse_chat(line: &str) -> Option<(String, String, String)> {
     None
 }
 
+// ════════════════════════════════════════════
+//  启动入口
+// ════════════════════════════════════════════
+
 pub fn start_broadcast_handler(
     pool: PgPool,
     mut log_rx: tokio::sync::broadcast::Receiver<LogEntry>,
@@ -78,29 +163,32 @@ pub fn start_broadcast_handler(
 ) -> tokio::task::JoinHandle<()> {
     tracing::info!("广播处理服务已启动");
 
-    // 定时通告循环
+    // 共享缓存：定时刷新，热路径只读
+    let cache: Arc<RwLock<BroadcastCache>> = Arc::new(RwLock::new(BroadcastCache::default()));
+
+    // ─── 定时任务：刷新缓存 + 处理定时通告 ───
     let pool_for_timer = pool.clone();
-    let pool_for_timer_rcon = rcon_pool.clone();
+    let rcon_for_timer = rcon_pool.clone();
+    let cache_for_timer = cache.clone();
     tokio::spawn(async move {
         let mut last_sent: HashMap<i32, chrono::DateTime<chrono::Utc>> = HashMap::new();
         loop {
             sleep(Duration::from_secs(30)).await;
+
+            // 刷新缓存
+            let new_cache = BroadcastCache::refresh(&pool_for_timer).await;
+            *cache_for_timer.write().await = new_cache;
+            let guard = cache_for_timer.read().await;
             let now = chrono::Utc::now();
 
-            let rows = match sqlx::query_as::<_, (i32, bool, String, i32)>(
-                "SELECT s.id, bc.announcement_enabled, bc.announcement_content, bc.announcement_interval FROM servers s JOIN broadcast_settings bc ON s.id = bc.server_id"
-            ).fetch_all(&pool_for_timer).await {
-                Ok(r) => r,
-                Err(_) => continue,
-            };
-
-            for (sid, bc_enabled, bc_content, bc_interval) in &rows {
-                if *bc_enabled && !bc_content.is_empty() && *bc_interval > 0 {
-                    let entry = last_sent.entry(-*sid).or_insert_with(|| now - chrono::Duration::minutes(*bc_interval as i64));
+            // 1. 处理 broadcast_settings 中的定时通告
+            for (sid, s) in &guard.settings {
+                if s.ann_enabled && !s.ann_content.is_empty() && s.ann_interval > 0 {
+                    let entry = last_sent.entry(*sid).or_insert_with(|| now - chrono::Duration::minutes(s.ann_interval as i64));
                     let elapsed = now - *entry;
-                    if elapsed.num_minutes() >= *bc_interval as i64 {
-                        let cmd = format!("AdminBroadcast \"{}\"", bc_content);
-                        if let Err(e) = send_rcon(&pool_for_timer_rcon, *sid, &cmd).await {
+                    if elapsed.num_minutes() >= s.ann_interval as i64 {
+                        let cmd = format!("AdminBroadcast \"{}\"", s.ann_content);
+                        if let Err(e) = send_rcon(&rcon_for_timer, *sid, &cmd).await {
                             tracing::error!(server_id = *sid, error = %e, "定时通告发送失败");
                         } else {
                             tracing::info!(server_id = *sid, "已发送定时通告");
@@ -110,29 +198,17 @@ pub fn start_broadcast_handler(
                 }
             }
 
-            // 处理 announcements 多条通告
-            let ann_configs = match sqlx::query_as::<_, (i32,)>(
-                "SELECT DISTINCT a.server_id FROM announcements a JOIN servers s ON s.id = a.server_id WHERE a.enabled = true"
-            ).fetch_all(&pool_for_timer).await {
-                Ok(r) => r,
-                Err(_) => continue,
-            };
-
-            for (sid,) in &ann_configs {
+            // 2. 处理 announcements 多条通告
+            for (sid, anns) in &guard.announcements {
                 let entry = last_sent.entry(*sid).or_insert_with(|| now - chrono::Duration::minutes(5));
                 let elapsed = now - *entry;
                 if elapsed.num_minutes() < 5 {
                     continue;
                 }
-
-                if let Ok(anns) = sqlx::query_as::<_, (i32, String, i32)>(
-                    "SELECT id, content, interval_minutes FROM announcements WHERE server_id=$1 AND enabled=true"
-                ).bind(sid).fetch_all(&pool_for_timer).await {
-                    for (_id, content, interval) in &anns {
-                        if *interval > 0 {
-                            let cmd = format!("AdminBroadcast \"{}\"", content);
-                            let _ = send_rcon(&pool_for_timer_rcon, *sid, &cmd).await;
-                        }
+                for (_id, content, interval) in anns {
+                    if *interval > 0 {
+                        let cmd = format!("AdminBroadcast \"{}\"", content);
+                        let _ = send_rcon(&rcon_for_timer, *sid, &cmd).await;
                     }
                 }
                 *entry = now;
@@ -140,10 +216,11 @@ pub fn start_broadcast_handler(
         }
     });
 
-    // 主循环：处理日志事件（进入提醒、OP列表、自动回复、聊天审核）
+    // ─── 主循环：处理日志事件（全部从缓存读取，零 DB 查询） ───
     let runtime_pool = pool.clone();
     let runtime_rcon = rcon_pool;
     let runtime_automod = chat_automod;
+    let runtime_cache = cache;
     tokio::spawn(async move {
         loop {
             match log_rx.recv().await {
@@ -152,20 +229,16 @@ pub fn start_broadcast_handler(
                     let server_id = entry.server_id;
                     if server_id == 0 { continue; }
 
-                    let bc_config = match sqlx::query_as::<_, (bool, String, bool, String)>(
-                        "SELECT bc.join_message_enabled, bc.join_message, bc.gameop_list_enabled, bc.gameop_list_message FROM broadcast_settings bc WHERE bc.server_id = $1"
-                    ).bind(server_id).fetch_optional(&runtime_pool).await {
-                        Ok(Some(c)) => c,
-                        Ok(None) => continue,
-                        Err(_) => continue,
+                    let guard = runtime_cache.read().await;
+                    let bc = match guard.settings.get(&server_id) {
+                        Some(s) => s.clone(),
+                        None => continue,
                     };
 
-                    let (join_enabled, join_msg, op_enabled, op_msg) = bc_config;
-
                     // 1. 玩家进入提醒
-                    if join_enabled {
+                    if bc.join_enabled {
                         if let Some((player_name, _)) = parse_player_join(raw) {
-                            let welcome = join_msg.replace("{player}", &player_name);
+                            let welcome = bc.join_msg.replace("{player}", &player_name);
                             let cmd = format!("AdminBroadcast \"{}\"", welcome);
                             match send_rcon(&runtime_rcon, server_id, &cmd).await {
                                 Ok(_) => tracing::info!(server_id, player = %player_name, "已发送欢迎消息"),
@@ -174,8 +247,7 @@ pub fn start_broadcast_handler(
                         }
                     }
 
-                    // 2. 在线OP列表 & 自动回复
-                    // 优先用 Agent 已解析的干净格式 (category=Chat-*, message="玩家名: 消息")
+                    // 2. 聊天事件处理
                     let chat_info = if let Some(ref cat) = entry.category {
                         if cat.starts_with("Chat-") {
                             entry.message.split_once(": ").map(|(name, msg)| (name.to_string(), String::new(), msg.to_string()))
@@ -208,31 +280,25 @@ pub fn start_broadcast_handler(
                         }
 
                         // OP 列表关键字检测
-                        if op_enabled {
+                        if bc.op_enabled {
                             let lower = message.to_lowercase();
                             if lower.contains("op") || lower.contains("管理员") || lower.contains("管理") {
-                                match sqlx::query_as::<_, (String,)>(
-                                    "SELECT username FROM admin_users WHERE is_active = true ORDER BY id"
-                                ).fetch_all(&runtime_pool).await {
-                                    Ok(admins) => {
-                                        let list: Vec<String> = admins.into_iter().map(|(u,)| u).collect();
-                                        let oplist = if list.is_empty() { "当前暂无在线管理员".to_string() } else { list.join(", ") };
-                                        let reply = op_msg.replace("{oplist}", &oplist);
-                                        let cmd = format!("AdminWarn \"{}\" \"{}\"", player_name, reply);
-                                        let _ = send_rcon(&runtime_rcon, server_id, &cmd).await;
-                                        tracing::info!(server_id, player = %player_name, "已回复OP列表");
-                                    }
-                                    Err(_) => {}
-                                }
+                                let oplist = if guard.admin_users.is_empty() {
+                                    "当前暂无在线管理员".to_string()
+                                } else {
+                                    guard.admin_users.join(", ")
+                                };
+                                let reply = bc.op_msg.replace("{oplist}", &oplist);
+                                let cmd = format!("AdminWarn \"{}\" \"{}\"", player_name, reply);
+                                let _ = send_rcon(&runtime_rcon, server_id, &cmd).await;
+                                tracing::info!(server_id, player = %player_name, "已回复OP列表");
                             }
                         }
 
-                        // 自动回复规则
-                        if let Ok(replies) = sqlx::query_as::<_, (String, String)>(
-                            "SELECT keyword, reply_message FROM auto_replies WHERE server_id=$1 AND enabled=true"
-                        ).bind(server_id).fetch_all(&runtime_pool).await {
+                        // 自动回复规则（从缓存读取）
+                        if let Some(replies) = guard.auto_replies.get(&server_id) {
                             let lower_msg = message.to_lowercase();
-                            for (keyword, reply_message) in &replies {
+                            for (keyword, reply_message) in replies {
                                 if lower_msg.contains(&keyword.to_lowercase()) {
                                     let cmd = format!("AdminBroadcast \"{}\"", reply_message);
                                     let _ = send_rcon(&runtime_rcon, server_id, &cmd).await;
