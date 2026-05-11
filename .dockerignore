@@ -1,0 +1,38 @@
+# Rust
+target/
+.cargo/registry/
+
+# Node
+node_modules/
+.next/
+out/
+dist/
+
+# Git
+.git/
+.gitignore
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docs
+docs/
+
+# Logs
+*.log
+*.tmp
+
+# Web (not dockerized)
+web/

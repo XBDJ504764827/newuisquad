@@ -1,0 +1,108 @@
+services:
+  # ═══════════════════════════════════════════════════
+  #  PostgreSQL 数据库
+  # ═══════════════════════════════════════════════════
+  postgres:
+    image: postgres:16-alpine
+    container_name: squad-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-newsquad}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-newsquad}
+      POSTGRES_DB: ${POSTGRES_DB:-newsquad}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-newsquad} -d ${POSTGRES_DB:-newsquad}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - squad-net
+
+  # ═══════════════════════════════════════════════════
+  #  Redis 缓存 / 限流 / JWT 黑名单
+  # ═══════════════════════════════════════════════════
+  redis:
+    image: redis:7-alpine
+    container_name: squad-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 128mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - squad-net
+
+  # ═══════════════════════════════════════════════════
+  #  管理后台后端（Rust）
+  # ═══════════════════════════════════════════════════
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: squad-backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-newsquad}:${POSTGRES_PASSWORD:-newsquad}@postgres:5432/${POSTGRES_DB:-newsquad}
+      REDIS_URL: redis://redis:6379
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: 8744
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      STEAM_API_KEY: ${STEAM_API_KEY:-}
+      INIT_ADMIN_USERNAME: ${INIT_ADMIN_USERNAME:-admin}
+      INIT_ADMIN_PASSWORD: ${INIT_ADMIN_PASSWORD:-admin123}
+      ALLOWED_ORIGIN: ${ALLOWED_ORIGIN:-*}
+      LOG_FILE_PATH: /var/log/game/server.log
+    ports:
+      - "8744:8744"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - squad-net
+
+  # ═══════════════════════════════════════════════════
+  #  管理后台前端（Next.js）
+  # ═══════════════════════════════════════════════════
+  admin-console:
+    build:
+      context: ./admin-console
+      dockerfile: Dockerfile
+      args:
+        BACKEND_URL: http://backend:8744
+    container_name: squad-admin-console
+    restart: unless-stopped
+    environment:
+      HOSTNAME: 0.0.0.0
+      PORT: 3000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - squad-net
+
+# ═══════════════════════════════════════════════════
+#  持久化卷
+# ═══════════════════════════════════════════════════
+volumes:
+  postgres_data:
+  redis_data:
+
+# ═══════════════════════════════════════════════════
+#  内部网络
+# ═══════════════════════════════════════════════════
+networks:
+  squad-net:
+    driver: bridge

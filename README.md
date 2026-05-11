@@ -7,32 +7,46 @@
 ## 架构概览
 
 ```
-┌─────────────────────────┐
-│   admin-console (前端)   │  Next.js 16 + React 19 + Tailwind CSS 4
-│   静态导出 → Nginx 代理  │
-└──────────┬──────────────┘
-           │ HTTP REST API (Bearer Token 认证)
-┌──────────▼──────────────┐
-│     backend (后端)       │  Rust + Axum 0.8 + SQLx + PostgreSQL
-│   端口: 8000             │
-└──┬──────────┬───────────┘
-   │          │ WebSocket (WSS)
-   │   ┌──────▼───────────┐
-   │   │  agent (游戏端)   │  Rust + tokio-tungstenite
-   │   │  部署在 Squad 服  │
-   │   └──────┬───────────┘
-   │          │ RCON
-   ▼          ▼
-┌─────────────────────────┐
-│    Squad 游戏服务器       │
-└─────────────────────────┘
+                   ┌──────────────────────────────────┐
+                   │         Docker Compose            │
+                   │                                   │
+┌──────────┐       │  ┌──────────┐  ┌──────────┐     │
+│  Nginx   │       │  │  Redis   │  │PostgreSQL│     │
+│ 域名反代  │       │  │  :6379   │  │  :5432   │     │
+└────┬─────┘       │  └────┬─────┘  └────┬─────┘     │
+     │             │       │             │            │
+     │   :8744     │  ┌────┴─────────────┴────┐       │
+     │   :3000     │  │       backend          │       │
+     │             │  │   (Rust + Axum 0.8)   │       │
+     │             │  │       :8744            │       │
+     │             │  └───────────┬───────────┘       │
+     │             │              │                    │
+     │             │  ┌───────────▼───────────┐       │
+     │             │  │    admin-console       │       │
+     │             │  │  (Next.js standalone)  │       │
+     │             │  │        :3000           │       │
+     │             │  └───────────────────────┘       │
+     │             └──────────────────────────────────┘
+     │                              │
+     │                      WebSocket (WSS)
+     │                              │
+     │              ┌───────────────▼───────────────┐
+     │              │   Agent (游戏服务器)             │
+     │              │   Rust + tokio-tungstenite     │
+     │              └───────────────┬───────────────┘
+     │                              │ RCON
+     ▼                              ▼
+┌─────────────────────────────────────────────────────┐
+│                 Squad 游戏服务器                       │
+└─────────────────────────────────────────────────────┘
 ```
 
 | 组件 | 技术栈 | 说明 |
 |------|--------|------|
 | **backend/** | Rust + Axum 0.8 + SQLx 0.8 + PostgreSQL | REST API 后端，约 106 个 API 端点 |
 | **agent/** | Rust + WebSocket (tokio-tungstenite) | 部署在游戏服务器，上报日志和状态 |
-| **admin-console/** | Next.js 16 + React 19 + Tailwind CSS 4 | 管理控制台前端，静态导出模式 |
+| **admin-console/** | Next.js 16 + React 19 + Tailwind CSS 4 | 管理控制台前端，standalone 模式 |
+| **redis** | Redis 7 | 速率限制 / JWT 黑名单 / 通用缓存 |
 
 ---
 
@@ -93,13 +107,18 @@
 
 ```
 newuisquad/
+├── docker-compose.yml          # Docker Compose 编排（postgres + redis + backend + admin-console）
+├── .env.example                # 环境变量模板
+├── .dockerignore               # Docker 构建忽略规则
 ├── backend/                    # Rust 后端服务
 │   ├── Cargo.toml
+│   ├── Dockerfile              # 后端容器构建
 │   ├── src/
 │   │   ├── main.rs             # 服务入口 & 启动流程
 │   │   ├── lib.rs              # 模块导出
 │   │   ├── config.rs           # 环境变量配置
 │   │   ├── db.rs               # PostgreSQL 连接池
+│   │   ├── redis.rs            # Redis 客户端封装（速率限制/黑名单/缓存）
 │   │   ├── api/                # API 路由处理（34 个模块）
 │   │   │   ├── mod.rs          # 路由定义 & AppState
 │   │   │   ├── auth.rs         # 认证
@@ -143,7 +162,8 @@ newuisquad/
 │
 ├── admin-console/             # 管理控制台前端
 │   ├── package.json
-│   ├── next.config.ts         # 静态导出配置
+│   ├── next.config.ts         # standalone 模式 + API 代理转发
+│   ├── Dockerfile             # 前端容器构建
 │   ├── app/
 │   │   ├── layout.tsx         # 根布局（暗色主题）
 │   │   ├── page.tsx           # 主页面（动态路由）
@@ -164,7 +184,6 @@ newuisquad/
 │   │           ├── RconConsolePage.tsx   # RCON 控制台
 │   │           ├── WorkflowsPage.tsx     # 工作流
 │   │           └── ... (22 个页面)
-│   └── out/                   # 构建输出目录
 │
 ├── docs/                      # 设计文档
 └── web/                       # 静态部署产物
@@ -174,10 +193,20 @@ newuisquad/
 
 ## 环境要求
 
+### 使用 Docker（推荐）
+
+| 依赖 | 版本 |
+|------|------|
+| Docker | 24+ |
+| Docker Compose | v2 |
+
+### 手动部署
+
 | 依赖 | 版本 |
 |------|------|
 | Rust | 1.75+ (edition 2021) |
 | PostgreSQL | 14+ |
+| Redis | 7+（可选，不配置则回退到内存模式） |
 | Node.js | 20+ |
 | npm | 10+ |
 
@@ -185,39 +214,63 @@ newuisquad/
 
 ## 快速开始
 
-### 1. 克隆项目并安装依赖
+### 方式一：Docker Compose（推荐）
 
 ```bash
 git clone <repository-url>
 cd newuisquad
+
+# 1. 配置环境变量
+cp .env.example .env
+vim .env   # 修改 JWT_SECRET、STEAM_API_KEY 等敏感值
+
+# 2. 构建并启动所有服务
+docker compose up -d --build
 ```
 
-### 2. 配置数据库
+首次启动会自动执行数据库迁移并创建默认管理员账号。
 
-创建 PostgreSQL 数据库并配置环境变量：
+服务端口：
+- **管理后台前端**：`http://<服务器IP>:3000`
+- **后端 API**：`http://<服务器IP>:8744`
+- **Agent WebSocket**：`ws://<服务器IP>:8744/agent/connect`
+
+数据持久化在 Docker named volume 中（`postgres_data`、`redis_data`）。
+
+### 方式二：手动部署
+
+#### 1. 配置数据库与 Redis
 
 ```bash
-# 创建数据库
+# 创建 PostgreSQL 数据库
 createdb newsquad
 
-# 配置环境变量
-cp backend/.env backend/.env  # 已存在则直接编辑
+# 启动 Redis（可选）
+redis-server --appendonly yes
 ```
 
-编辑 `backend/.env`：
+#### 2. 配置环境变量
+
+```bash
+cp .env.example backend/.env
+vim backend/.env
+```
+
+关键配置：
 
 ```env
 DATABASE_URL=postgres://用户名:密码@数据库地址:5432/数据库名
+REDIS_URL=redis://127.0.0.1:6379          # 可选
 SERVER_HOST=0.0.0.0
-SERVER_PORT=8000
+SERVER_PORT=8744
 STEAM_API_KEY=你的Steam_API_Key
+JWT_SECRET=你的JWT密钥                     # 务必修改
 INIT_ADMIN_USERNAME=admin
-INIT_ADMIN_PASSWORD=你的安全密码
-JWT_SECRET=你的JWT密钥
+INIT_ADMIN_PASSWORD=你的安全密码            # 务必修改
 ALLOWED_ORIGIN=*
 ```
 
-### 3. 启动后端
+#### 3. 启动后端
 
 ```bash
 cd backend
@@ -225,23 +278,20 @@ cargo build --release
 cargo run --release
 ```
 
-首次启动会自动：
-- 执行数据库迁移（创建所有表）
-- 创建默认管理员账号
+后端默认监听 `http://0.0.0.0:8744`。
 
-后端默认监听 `http://0.0.0.0:8000`。
-
-### 4. 构建前端（可选）
+#### 4. 构建前端
 
 ```bash
 cd admin-console
 npm install
-npm run build    # 生成静态文件到 out/ 目录
+BACKEND_URL=http://127.0.0.1:8744 npm run build
+npm run start    # 监听 http://localhost:3000
 ```
 
-前端构建为纯静态 HTML，通过 Nginx 或后端反向代理提供服务。
+前端使用 Next.js standalone 模式，通过内置 rewrites 代理 API 请求到后端。
 
-### 5. 部署 Agent（在游戏服务器上）
+#### 5. 部署 Agent（在游戏服务器上）
 
 ```bash
 cd agent
@@ -417,7 +467,7 @@ RCON_PASSWORD=你的RCON密码
 
 ```bash
 cd backend
-cargo run              # 开发模式运行
+cargo run              # 开发模式运行（默认端口 8744）
 cargo build --release  # 生产构建
 cargo test             # 运行测试
 ```
@@ -427,7 +477,8 @@ cargo test             # 运行测试
 ```bash
 cd admin-console
 npm run dev            # 开发服务器（http://localhost:3000）
-npm run build          # 静态导出到 out/
+npm run build          # 生产构建（standalone 输出）
+npm run start          # 启动 standalone 服务
 npm run lint           # 代码检查
 ```
 
@@ -443,65 +494,91 @@ cargo build --release  # 生产构建
 
 ## 部署建议
 
-### 生产环境架构
+### 生产环境架构（Docker Compose）
 
 ```
-                   ┌──────────┐
-                   │  Nginx   │ 反向代理 + 静态文件
-                   └────┬─────┘
-                        │
-          ┌─────────────┼─────────────┐
-          │             │             │
-    /api/* │      /*.html│     /agent/connect
-          ▼             ▼             │
-    ┌──────────┐  ┌──────────┐       │
-    │ Backend  │  │  静态文件  │       │
-    │ :8000    │  │  (out/)   │       │
-    └────┬─────┘  └──────────┘       │
-         │                            │
-         ▼                            ▼
-    ┌──────────┐              ┌──────────────┐
-    │PostgreSQL│              │ Squad Server  │
-    │          │              │   + Agent     │
-    └──────────┘              └──────────────┘
+                         ┌──────────┐
+                         │  Nginx   │  域名反代 + SSL 终端
+                         └────┬─────┘
+                              │
+                ┌─────────────┼─────────────┐
+                │             │             │
+          :8744│        :3000│             │
+                ▼             ▼             │
+          ┌──────────┐  ┌──────────┐       │
+          │ Backend  │  │  Admin   │       │
+          │ 容器     │  │ Console  │       │
+          │          │  │ 容器     │       │
+          └────┬─────┘  └──────────┘       │
+               │                            │
+       ┌───────┴───────┐                    │
+       ▼               ▼                    │
+  ┌──────────┐   ┌──────────┐              │
+  │PostgreSQL│   │  Redis   │              │
+  │   容器   │   │   容器   │              │
+  └──────────┘   └──────────┘              │
+                                           │
+                                    ┌──────┴──────┐
+                                    │ Squad Server │
+                                    │   + Agent    │
+                                    └─────────────┘
 ```
 
-### Nginx 配置示例
+### Nginx 反向代理配置（配合域名）
 
 ```nginx
 server {
-    listen 80;
+    listen 443 ssl http2;
     server_name admin.example.com;
 
-    # 管理控制台静态文件
-    root /opt/newuisquad/admin-console/out;
-    index index.html;
+    ssl_certificate     /etc/ssl/certs/example.com.pem;
+    ssl_certificate_key /etc/ssl/private/example.com.key;
 
-    # API 反向代理
-    location /api/ {
-        proxy_pass http://127.0.0.1:8000;
+    # 管理控制台前端
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # API 和 Agent WebSocket 通过 Next.js rewrites 自动转发到 Backend
+    # 或直接暴露 Backend 端口供 Agent 连接：
+    location /agent/connect {
+        proxy_pass http://127.0.0.1:8744;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
     }
-
-    # Agent WebSocket
-    location /agent/connect {
-        proxy_pass http://127.0.0.1:8000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-    }
-
-    # SPA fallback
-    location / {
-        try_files $uri /index.html;
-    }
 }
 ```
+
+Agent 连接地址：`wss://admin.example.com/agent/connect`（经过 Nginx SSL 终端）。
+
+### 环境变量参考
+
+所有通过 `.env` 文件或 docker-compose 环境变量配置：
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `DATABASE_URL` | — | PostgreSQL 连接字符串 |
+| `POSTGRES_USER` | newsquad | 数据库用户名（Docker） |
+| `POSTGRES_PASSWORD` | newsquad | 数据库密码（Docker） |
+| `POSTGRES_DB` | newsquad | 数据库名（Docker） |
+| `REDIS_URL` | — | Redis 连接字符串（可选） |
+| `SERVER_HOST` | 0.0.0.0 | 后端监听地址 |
+| `SERVER_PORT` | 8744 | 后端监听端口 |
+| `JWT_SECRET` | — | JWT 签名密钥（**生产务必修改**） |
+| `STEAM_API_KEY` | — | Steam Web API Key |
+| `INIT_ADMIN_USERNAME` | admin | 初始管理员用户名 |
+| `INIT_ADMIN_PASSWORD` | admin123 | 初始管理员密码（**生产务必修改**） |
+| `ALLOWED_ORIGIN` | * | CORS 允许来源 |
+| `LOG_FILE_PATH` | /var/log/game/server.log | 游戏服务器日志路径（Agent 上报时可忽略） |
+| `BACKEND_URL` | http://backend:8744 | 前端到后端的内部地址（Docker 构建参数） |
 
 ---
 
