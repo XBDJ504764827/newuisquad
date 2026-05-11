@@ -42,18 +42,25 @@ pub async fn kill_events(
     let page = q.page.unwrap_or(1).max(1);
     let per_page = q.per_page.unwrap_or(50).min(200);
     let offset = (page - 1) * per_page;
+    let steam64 = q.steam64.as_deref().filter(|sid| !sid.is_empty());
 
-    let total = if let Some(ref sid) = q.steam64 {
-        sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM kill_events WHERE server_id=$1 AND (attacker_steam64=$2 OR $2='')")
+    let total = if let Some(sid) = steam64 {
+        sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM kill_events WHERE server_id=$1 AND (attacker_steam64=$2 OR victim_steam64=$2)")
             .bind(server_id).bind(sid).fetch_one(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.0
     } else {
         sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM kill_events WHERE server_id=$1")
             .bind(server_id).fetch_one(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.0
     };
 
-    let items = sqlx::query_as::<_, (i32, i32, String, String, String, String, String, String, f64, String, String, bool, bool, chrono::DateTime<chrono::Utc>)>(
-        "SELECT id, server_id, attacker_name, attacker_eos, attacker_steam64, victim_name, victim_eos, victim_steam64, damage, weapon, event_type, is_kill, is_teamkill, logged_at FROM kill_events WHERE server_id=$1 ORDER BY logged_at DESC LIMIT $2 OFFSET $3"
-    ).bind(server_id).bind(per_page).bind(offset).fetch_all(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let items = if let Some(sid) = steam64 {
+        sqlx::query_as::<_, (i32, i32, String, String, String, String, String, String, f64, String, String, bool, bool, chrono::DateTime<chrono::Utc>)>(
+            "SELECT id, server_id, attacker_name, attacker_eos, attacker_steam64, victim_name, victim_eos, victim_steam64, damage, weapon, event_type, is_kill, is_teamkill, logged_at FROM kill_events WHERE server_id=$1 AND (attacker_steam64=$2 OR victim_steam64=$2) ORDER BY logged_at DESC LIMIT $3 OFFSET $4"
+        ).bind(server_id).bind(sid).bind(per_page).bind(offset).fetch_all(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    } else {
+        sqlx::query_as::<_, (i32, i32, String, String, String, String, String, String, f64, String, String, bool, bool, chrono::DateTime<chrono::Utc>)>(
+            "SELECT id, server_id, attacker_name, attacker_eos, attacker_steam64, victim_name, victim_eos, victim_steam64, damage, weapon, event_type, is_kill, is_teamkill, logged_at FROM kill_events WHERE server_id=$1 ORDER BY logged_at DESC LIMIT $2 OFFSET $3"
+        ).bind(server_id).bind(per_page).bind(offset).fetch_all(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    };
 
     let data: Vec<serde_json::Value> = items.into_iter().map(|(id, sid, an, ae, as64, vn, ve, vs64, dmg, wp, et, ik, itk, ts)| {
         serde_json::json!({ "id": id, "server_id": sid, "attacker_name": an, "attacker_eos": ae, "attacker_steam64": as64, "victim_name": vn, "victim_eos": ve, "victim_steam64": vs64, "damage": dmg, "weapon": wp, "event_type": et, "is_kill": ik, "is_teamkill": itk, "logged_at": ts })

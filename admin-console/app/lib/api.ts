@@ -1,4 +1,12 @@
 const API_BASE = '/api/v1';
+export const AUTH_EXPIRED_EVENT = 'auth:expired';
+
+export function clearAuthStorage() {
+    try { localStorage.removeItem('token'); } catch {}
+    try { localStorage.removeItem('username'); } catch {}
+    try { localStorage.removeItem('role'); } catch {}
+    try { localStorage.removeItem('permissions'); } catch {}
+}
 
 function getAuthHeaders(): Record<string, string> {
     try {
@@ -21,11 +29,8 @@ export function api(path: string, init?: RequestInit, timeoutMs = 15000): Promis
     return fetch(`${API_BASE}${path}`, { ...init, headers, signal }).then(res => {
         clearTimeout(timer);
         if (res.status === 401) {
-            try { localStorage.removeItem('token'); } catch {}
-            try { localStorage.removeItem('username'); } catch {}
-            try { localStorage.removeItem('role'); } catch {}
-            try { localStorage.removeItem('permissions'); } catch {}
-            window.location.reload();
+            clearAuthStorage();
+            try { window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT)); } catch {}
         }
         return res;
     }).catch(err => {

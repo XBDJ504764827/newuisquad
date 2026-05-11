@@ -9,7 +9,8 @@ mod services;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tower_http::cors::{CorsLayer, Any};
+use axum::http::HeaderValue;
+use tower_http::cors::{AllowOrigin, CorsLayer, Any};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -103,8 +104,20 @@ async fn main() -> anyhow::Result<()> {
             .allow_methods(Any)
             .allow_headers(Any)
     } else {
+        let origins = config.allowed_origin
+            .split(',')
+            .map(str::trim)
+            .filter(|origin| !origin.is_empty())
+            .map(|origin| {
+                origin.parse::<HeaderValue>()
+                    .map_err(|e| anyhow::anyhow!("无效的 ALLOWED_ORIGIN `{}`: {}", origin, e))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        if origins.is_empty() {
+            anyhow::bail!("ALLOWED_ORIGIN 至少配置一个有效来源");
+        }
         CorsLayer::new()
-            .allow_origin(tower_http::cors::AllowOrigin::list(config.allowed_origin.split(',').map(|s| s.trim().parse().unwrap())))
+            .allow_origin(AllowOrigin::list(origins))
             .allow_methods(Any)
             .allow_headers(Any)
     };

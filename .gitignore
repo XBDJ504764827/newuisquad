@@ -1,3 +1,17 @@
 /web
 /docs
 .claude
+node_modules/
+.next/
+out/
+dist/
+build/
+target/
+.env
+.env.*
+!.env.example
+*.log
+*.tmp
+.DS_Store
+.vscode/
+.idea/

@@ -6,6 +6,7 @@ import Sidebar from './components/Sidebar';
 import Topbar from './components/Topbar';
 import LoginPage from './components/LoginPage';
 import { PageId } from './types';
+import { AUTH_EXPIRED_EVENT, api, clearAuthStorage } from './lib/api';
 
 const pageComponents: Record<PageId, React.ComponentType> = {
   'summary': dynamic(() => import('./components/pages/SummaryPage'), { loading: () => <LoadingPlaceholder /> }),
@@ -82,37 +83,71 @@ export default function Home() {
   const [token, setToken] = useState<string | null>(null);
   const [username, setUsername] = useState<string | null>(null);
   const [permissions, setPermissions] = useState<Record<string, boolean>>({});
+  const [authChecked, setAuthChecked] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
     const saved = localStorage.getItem('token');
-    if (saved) {
-      setToken(saved);
-      setUsername(localStorage.getItem('username'));
-      try { setPermissions(JSON.parse(localStorage.getItem('permissions') || '{}')); } catch {}
+    if (!saved) {
+      const timer = window.setTimeout(() => {
+        if (!cancelled) setAuthChecked(true);
+      }, 0);
+      return () => {
+        cancelled = true;
+        window.clearTimeout(timer);
+      };
     }
+    api('/auth/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: saved }),
+    }).then(res => res.json()).then(data => {
+      if (cancelled) return;
+      if (data.valid) {
+        setToken(saved);
+        setUsername(data.username || localStorage.getItem('username'));
+        const nextPermissions = data.permissions || JSON.parse(localStorage.getItem('permissions') || '{}');
+        setPermissions(nextPermissions);
+        localStorage.setItem('permissions', JSON.stringify(nextPermissions));
+        if (data.username) localStorage.setItem('username', data.username);
+        if (data.role) localStorage.setItem('role', data.role);
+      } else {
+        clearAuthStorage();
+      }
+    }).catch(() => {
+      if (!cancelled) clearAuthStorage();
+    }).finally(() => {
+      if (!cancelled) setAuthChecked(true);
+    });
+    return () => { cancelled = true; };
   }, []);
 
-  function handleLogin(t: string, u: string, _role: string) {
+  function handleLogin(t: string, u: string) {
     setToken(t);
     setUsername(u);
     try { setPermissions(JSON.parse(localStorage.getItem('permissions') || '{}')); } catch {}
   }
 
-  function handleLogout() {
-    localStorage.removeItem('token');
-    localStorage.removeItem('username');
-    localStorage.removeItem('role');
-    localStorage.removeItem('permissions');
+  const handleLogout = useCallback(() => {
+    clearAuthStorage();
     setToken(null);
     setUsername(null);
     setPermissions({});
-  }
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener(AUTH_EXPIRED_EVENT, handleLogout);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handleLogout);
+  }, [handleLogout]);
 
   // 首次挂载时从 URL hash 恢复页面（仅客户端），无闪烁
   useEffect(() => {
-    const page = getHashPage() || 'summary';
-    setActivePage(page);
-    setBreadcrumb(breadcrumbMap[page]);
+    const timer = window.setTimeout(() => {
+      const page = getHashPage() || 'summary';
+      setActivePage(page);
+      setBreadcrumb(breadcrumbMap[page]);
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, []);
 
   // 页面切换 → 同步到 hash
@@ -120,7 +155,7 @@ export default function Home() {
     if (activePage) window.location.hash = activePage;
   }, [activePage]);
 
-  const handleNavigate = useCallback((pageId: PageId, _category: string, _pageName: string) => {
+  const handleNavigate = useCallback((pageId: PageId) => {
     setActivePage(pageId);
     setBreadcrumb(breadcrumbMap[pageId]);
   }, []);
@@ -134,6 +169,8 @@ export default function Home() {
     setDark(nextDark);
     document.documentElement.className = nextDark ? 'dark' : 'light';
   }
+
+  if (!authChecked) return null;
 
   if (!token) {
     return <LoginPage onLogin={handleLogin} />;

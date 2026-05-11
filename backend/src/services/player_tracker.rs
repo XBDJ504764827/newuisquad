@@ -265,18 +265,23 @@ impl PlayerTracker {
             refresh_error: None,
         };
 
+        let player_count = state.player_count;
+        let team_count = state.teams.len();
+        let squad_count = state.squads.len();
+        let map_name = state.map_name.clone();
+
         let mut states = self.states.write().await;
         states.insert(server_id, state);
+        drop(states);
 
         // Publish PlayerListUpdated event
         if let Some(ref em) = self.event_manager {
-            let s = states.get(&server_id).unwrap();
             em.publish(GameEvent {
                 player_list_updated: Some(PlayerListUpdatedData {
-                    player_count: s.player_count,
-                    team_count: s.teams.len(),
-                    squad_count: s.squads.len(),
-                    map_name: s.map_name.clone(),
+                    player_count,
+                    team_count,
+                    squad_count,
+                    map_name,
                     timestamp: now,
                 }),
                 ..GameEvent::new(server_id, EventType::PlayerListUpdated)

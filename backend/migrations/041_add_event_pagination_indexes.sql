@@ -1,0 +1,14 @@
+CREATE INDEX IF NOT EXISTS idx_server_logs_server_logged ON server_logs(server_id, logged_at DESC);
+CREATE INDEX IF NOT EXISTS idx_rcon_logs_server_created ON rcon_logs(server_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_server_logged ON chat_messages(server_id, logged_at DESC);
+CREATE INDEX IF NOT EXISTS idx_fly_events_server_logged ON fly_events(server_id, logged_at DESC);
+CREATE INDEX IF NOT EXISTS idx_kill_events_server_logged ON kill_events(server_id, logged_at DESC);
+CREATE INDEX IF NOT EXISTS idx_kill_events_server_attacker_logged ON kill_events(server_id, attacker_steam64, logged_at DESC);
+CREATE INDEX IF NOT EXISTS idx_kill_events_server_victim_logged ON kill_events(server_id, victim_steam64, logged_at DESC);
+CREATE INDEX IF NOT EXISTS idx_match_info_server_logged ON match_info(server_id, logged_at DESC);
+CREATE INDEX IF NOT EXISTS idx_explosion_events_server_logged ON explosion_events(server_id, logged_at DESC);
+CREATE INDEX IF NOT EXISTS idx_deployable_damaged_events_server_logged ON deployable_damaged_events(server_id, logged_at DESC);
+CREATE INDEX IF NOT EXISTS idx_tick_rate_events_server_logged ON tick_rate_events(server_id, logged_at DESC);
+CREATE INDEX IF NOT EXISTS idx_vehicle_events_server_logged ON vehicle_events(server_id, logged_at DESC);
+CREATE INDEX IF NOT EXISTS idx_admin_actions_server_logged ON admin_actions(server_id, logged_at DESC);
+CREATE INDEX IF NOT EXISTS idx_player_info_server_last_seen ON player_info(server_id, last_seen DESC);
