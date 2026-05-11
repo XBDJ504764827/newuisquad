@@ -160,40 +160,27 @@ export function LeftSidePanel({
 
           {/* 服务器时间倍数 */}
           <div style={{ borderTop: '1px solid var(--border)', paddingTop: 10, marginTop: 4 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
               <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--text2)' }}>⏱️ 时间倍数</span>
-              <span style={{ fontSize: 12, fontWeight: 700, color: slomoValue !== 1 ? '#f59e0b' : 'var(--text2)', fontFamily: 'monospace' }}>{slomoValue}x</span>
+              <span style={{ fontSize: 12, fontWeight: 700, color: slomoValue !== 1 ? '#f59e0b' : 'var(--text2)', fontFamily: 'monospace' }}>{slomoValue}X</span>
             </div>
-            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              <input
-                type="range"
-                min={0} max={20} step={0.1}
-                value={slomoValue}
-                onChange={e => onSlomoChange(parseFloat(e.target.value))}
-                style={{ flex: 1, accentColor: 'var(--blue)', height: 4 }}
-              />
-              <input
-                type="number"
-                min={0} max={20} step={0.1}
-                value={slomoValue}
-                onChange={e => { const v = parseFloat(e.target.value); if (!isNaN(v) && v >= 0 && v <= 20) onSlomoChange(v); }}
-                style={{
-                  width: 52, padding: '3px 6px', fontSize: 11, textAlign: 'center',
-                  background: 'var(--bg2)', border: '1px solid var(--border)',
-                  borderRadius: 4, color: 'var(--text)', fontFamily: 'monospace',
-                }}
-              />
-              <button
-                onClick={() => onSendRcon(`AdminSlomo ${slomoValue}`)}
-                style={{
-                  padding: '4px 10px', borderRadius: 4, border: 'none', cursor: 'pointer',
-                  fontSize: 10, fontWeight: 600, background: 'var(--blue)', color: '#fff',
-                  whiteSpace: 'nowrap', transition: 'all .1s',
-                }}
-              >应用</button>
-            </div>
-            <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 4 }}>
-              0=暂停 1=正常 0-20可调
+            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+              {[1, 2, 3, 5, 16, 20].map(v => (
+                <button
+                  key={v}
+                  onClick={() => { onSlomoChange(v); onSendRcon(`AdminSlomo ${v}`); }}
+                  style={{
+                    flex: 1, minWidth: 40, padding: '6px 0', borderRadius: 6,
+                    border: slomoValue === v ? '1px solid var(--blue)' : '1px solid var(--border)',
+                    background: slomoValue === v ? 'rgba(59,130,246,0.15)' : 'var(--bg3)',
+                    color: slomoValue === v ? 'var(--blue)' : 'var(--text2)',
+                    cursor: 'pointer', fontSize: 12, fontWeight: 700, fontFamily: 'monospace',
+                    transition: 'all .12s',
+                  }}
+                  onMouseEnter={e => { if (slomoValue !== v) { e.currentTarget.style.background = 'var(--bg4)'; e.currentTarget.style.color = 'var(--text)'; } }}
+                  onMouseLeave={e => { if (slomoValue !== v) { e.currentTarget.style.background = 'var(--bg3)'; e.currentTarget.style.color = 'var(--text2)'; } }}
+                >{v}X</button>
+              ))}
             </div>
           </div>
         </div>

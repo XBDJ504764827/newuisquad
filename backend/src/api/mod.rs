@@ -128,6 +128,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v1/servers/{id}/tick-rate-events", get(squad_events::tick_rate_events))
         .route("/api/v1/servers/{id}/vehicle-events", get(squad_events::vehicle_events))
         .route("/api/v1/servers/{id}/admin-broadcasts", get(squad_events::admin_broadcasts))
+        .route("/api/v1/servers/{id}/connection-events", get(squad_events::connection_events))
         .route("/api/v1/servers/{id}/chat-messages", get(chat::list))
         .route("/api/v1/servers/{id}/server-state", get(server_control::get_server_state))
         .route("/api/v1/servers/{id}/server-info", get(server_control::get_server_info))

@@ -118,7 +118,7 @@ function VehicleTable({ data }: { data: any[] }) {
       <tr key={i} style={{ borderBottom: '1px solid var(--border2)' }}>
         <td style={td}>{new Date(r.logged_at).toLocaleString('zh-CN')}</td>
         <td style={td}>{r.player_name}</td>
-        <td style={{...td, fontFamily: 'monospace', fontSize: 11}}>{r.steam64?.slice(-8)}</td>
+        <td style={{...td, fontFamily: 'monospace', fontSize: 11}}>{r.steam64}</td>
         <td style={td}>{r.vehicle_name}</td>
         <td style={{...td, color: r.event_type === 'enter' ? '#10b981' : '#ef4444'}}>{r.event_type === 'enter' ? '进入' : '离开'}</td>
       </tr>))}</tbody></table>;

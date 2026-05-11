@@ -55,37 +55,39 @@ export default function ServerFeedsPage() {
 
   const loadHistorical = useCallback(async (sid: number) => {
     setLoading(true);
+    setError(null);
+
+    // 聊天消息
     try {
-      const [chatRes, killRes, matchRes] = await Promise.all([
-        api(`/servers/${sid}/chat-messages?limit=80`),
-        api(`/servers/${sid}/kill-events?limit=40`),
-        api(`/servers/${sid}/match-events?limit=30`),
-      ]);
+      const chatRes = await api(`/servers/${sid}/chat-messages?per_page=80`);
       const chatData = await chatRes.json();
-      const killData = await killRes.json();
-      const matchData = await matchRes.json();
-
       setChatMessages((chatData.data || []).map((c: any) => ({
-        id: c.id, player_name: c.player_name || c.name || '', steam_id: c.steam_id || '',
-        message: c.message || '', chat_type: c.chat_type || 'ChatAll', logged_at: c.logged_at || '',
+        id: c.id, player_name: c.player_name || c.name || '', steam_id: c.steam_id || c.steam64 || '',
+        message: c.message || '', chat_type: c.chat_type || c.channel || 'ChatAll', logged_at: c.logged_at || '',
       })));
+    } catch {}
 
-      const connEvents = (matchData.data || []).filter((e: any) =>
-        e.event_type === 'connect' || e.event_type === 'disconnect' || e.event_type === 'join' || e.event_type === 'leave'
-      ).map((e: any) => ({
-        id: e.id, player_name: e.player_name || e.name || '', steam_id: e.steam_id || '',
-        action: e.event_type === 'connect' || e.event_type === 'join' ? 'connected' : 'disconnected',
-        ip_address: e.ip || '', logged_at: e.logged_at || '',
-      }));
-      setConnections(connEvents);
+    // 玩家连接事件
+    try {
+      const connRes = await api(`/servers/${sid}/connection-events?per_page=100`);
+      const connData = await connRes.json();
+      setConnections((connData.data || []).map((e: any) => ({
+        id: e.id, player_name: e.player_name || '', steam_id: e.steam64 || '',
+        action: e.action || 'connected',
+        ip_address: e.ip_address || '', logged_at: e.logged_at || '',
+      })));
+    } catch {}
 
+    // 误伤队友
+    try {
+      const killRes = await api(`/servers/${sid}/kill-events?per_page=100`);
+      const killData = await killRes.json();
       setTeamkills((killData.data || []).filter((e: any) => e.is_teamkill).map((e: any) => ({
         id: e.id, attacker_name: e.attacker_name || '', victim_name: e.victim_name || '',
         weapon: e.weapon || '', damage: e.damage || 0, logged_at: e.logged_at || '',
       })));
-    } catch (e: any) {
-      setError(e.message);
-    }
+    } catch {}
+
     setLoading(false);
   }, []);
 
@@ -108,23 +110,31 @@ export default function ServerFeedsPage() {
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        if (data.type === 'chat' || data.chat_type) {
+        const cat = data.category || '';
+        // 聊天消息：category 以 Chat- 开头
+        if (cat.startsWith('Chat-') || cat === 'Chat') {
+          const colon = (data.message || '').indexOf(': ');
+          const player = colon > 0 ? data.message.slice(0, colon) : '';
+          const msg = colon > 0 ? data.message.slice(colon + 2) : data.message || '';
           setChatMessages(prev => [...prev.slice(-199), {
-            id: Date.now(), player_name: data.player_name || data.name || '',
-            steam_id: data.steam_id || '', message: data.message || '',
-            chat_type: data.chat_type || 'ChatAll', logged_at: new Date().toISOString(),
+            id: Date.now(), player_name: player,
+            steam_id: '', message: msg,
+            chat_type: cat.replace('Chat-', 'Chat') || 'ChatAll', logged_at: data.logged_at || new Date().toISOString(),
           }]);
-        } else if (data.type === 'connect' || data.type === 'disconnect' || data.event_type === 'connect' || data.event_type === 'disconnect') {
+        }
+        // 玩家连接/断开
+        if (cat === 'PlayerJoin') {
           setConnections(prev => [...prev.slice(-99), {
-            id: Date.now(), player_name: data.player_name || data.name || '',
-            steam_id: data.steam_id || '', action: data.type === 'disconnect' || data.event_type === 'disconnect' ? 'disconnected' : 'connected',
-            ip_address: data.ip || '', logged_at: new Date().toISOString(),
+            id: Date.now(), player_name: data.message || '',
+            steam_id: '', action: 'connected',
+            ip_address: '', logged_at: data.logged_at || new Date().toISOString(),
           }]);
-        } else if (data.type === 'kill' && data.is_teamkill) {
-          setTeamkills(prev => [...prev.slice(-99), {
-            id: Date.now(), attacker_name: data.attacker_name || '',
-            victim_name: data.victim_name || '', weapon: data.weapon || '',
-            damage: data.damage || 0, logged_at: new Date().toISOString(),
+        }
+        if (cat === 'PlayerLeave') {
+          setConnections(prev => [...prev.slice(-99), {
+            id: Date.now(), player_name: data.message || '',
+            steam_id: '', action: 'disconnected',
+            ip_address: '', logged_at: data.logged_at || new Date().toISOString(),
           }]);
         }
       } catch {}

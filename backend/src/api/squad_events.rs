@@ -220,6 +220,37 @@ pub async fn vehicle_events(
     Ok(Json(serde_json::json!({"data":data,"total":total,"page":page,"per_page":per_page})))
 }
 
+/// Player connection/disconnection events
+pub async fn connection_events(
+    State(state): State<AppState>, Path(server_id): Path<i32>, Query(q): Query<PageQuery>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let page = q.page.unwrap_or(1).max(1); let per_page = q.per_page.unwrap_or(50).min(200);
+    let offset = (page - 1) * per_page;
+
+    // 尝试从 connection_events 表获取数据
+    let conn_result = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM connection_events WHERE server_id=$1")
+        .bind(server_id).fetch_one(&state.pool).await;
+
+    if let Ok((total,)) = conn_result {
+        if total > 0 {
+            let items = sqlx::query_as::<_, (i32, String, String, String, String, chrono::DateTime<chrono::Utc>)>(
+                "SELECT id,player_name,steam64,action,ip_address,logged_at FROM connection_events WHERE server_id=$1 ORDER BY logged_at DESC LIMIT $2 OFFSET $3"
+            ).bind(server_id).bind(per_page).bind(offset).fetch_all(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            let data: Vec<_> = items.into_iter().map(|r| serde_json::json!({"id":r.0,"player_name":r.1,"steam64":r.2,"action":r.3,"ip_address":r.4,"logged_at":r.5})).collect();
+            return Ok(Json(serde_json::json!({"data":data,"total":total,"page":page,"per_page":per_page})));
+        }
+    }
+
+    // 回退：从 player_info 获取最近活跃玩家作为连接记录
+    let (total,) = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM player_info WHERE server_id=$1")
+        .bind(server_id).fetch_one(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let items = sqlx::query_as::<_, (i32, String, String, String, chrono::DateTime<chrono::Utc>)>(
+        "SELECT id,player_name,steam64,ip,last_seen FROM player_info WHERE server_id=$1 ORDER BY last_seen DESC LIMIT $2 OFFSET $3"
+    ).bind(server_id).bind(per_page).bind(offset).fetch_all(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let data: Vec<_> = items.into_iter().map(|r| serde_json::json!({"id":r.0,"player_name":r.1,"steam64":r.2,"action":"connected","ip_address":r.3,"logged_at":r.4})).collect();
+    Ok(Json(serde_json::json!({"data":data,"total":total,"page":page,"per_page":per_page})))
+}
+
 /// Admin broadcast messages
 pub async fn admin_broadcasts(
     State(state): State<AppState>, Path(server_id): Path<i32>, Query(q): Query<PageQuery>,

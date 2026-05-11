@@ -368,6 +368,14 @@ pub fn start_damage_notify(
                                             t.register_alt_id(server_id, attacker_eos, attacker_steam64);
                                             drop(t);
                                         }
+                                        // 标记数据库中对应的 kill_events 为 teamkill
+                                        let _ = sqlx::query(
+                                            "UPDATE kill_events SET is_teamkill = true \
+                                             WHERE id = (SELECT id FROM kill_events \
+                                             WHERE server_id = $1 AND attacker_steam64 = $2 AND victim_name = $3 \
+                                             AND is_teamkill = false AND logged_at > NOW() - INTERVAL '30 seconds' \
+                                             ORDER BY logged_at DESC LIMIT 1)"
+                                        ).bind(server_id).bind(attacker_steam64).bind(victim).execute(&pool).await;
                                         // 友方误伤
                                         handle_teamkill(
                                             &pool, &tracker, &server_states, server_id,

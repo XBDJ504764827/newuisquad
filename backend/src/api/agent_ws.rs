@@ -170,6 +170,7 @@ async fn handle_socket(
                                             if !steam64.is_empty() {
                                                 let _ = sqlx::query("INSERT INTO player_info (server_id, player_name, steam64, eos_id, ip, first_seen, last_seen) VALUES ($1,$2,$3,$4,$5,$6,$6) ON CONFLICT DO NOTHING").bind(sid).bind(&player_name).bind(&steam64).bind(&eos_id).bind(&ip).bind(logged_at).execute(&pool).await;
                                                 let _ = sqlx::query("UPDATE player_info SET player_name=$1, eos_id=$2, ip=$3, last_seen=$4 WHERE server_id=$5 AND steam64=$6").bind(&player_name).bind(&eos_id).bind(&ip).bind(logged_at).bind(sid).bind(&steam64).execute(&pool).await;
+                                                let _ = sqlx::query("INSERT INTO connection_events (server_id, player_name, steam64, action, ip_address, logged_at) VALUES ($1,$2,$3,'connected',$4,$5)").bind(sid).bind(&player_name).bind(&steam64).bind(&ip).bind(logged_at).execute(&pool).await;
                                             }
                                         }
                                         ParsedEvent::FlyEvent { player_name, eos_id, steam64, event_type, logged_at } => {
@@ -241,6 +242,12 @@ async fn handle_socket(
                                         }
                                         ParsedEvent::PlayerDisconnected { eos_id, logged_at, .. } => {
                                             let _ = sqlx::query("UPDATE player_info SET last_seen = $3 WHERE server_id = $1 AND eos_id = $2").bind(sid).bind(&eos_id).bind(logged_at).execute(&pool).await;
+                                            // 记录断开连接事件
+                                            if let Ok(Some(row)) = sqlx::query_as::<_, (String, String)>(
+                                                "SELECT player_name, steam64 FROM player_info WHERE server_id=$1 AND eos_id=$2 LIMIT 1"
+                                            ).bind(sid).bind(&eos_id).fetch_optional(&pool).await {
+                                                let _ = sqlx::query("INSERT INTO connection_events (server_id, player_name, steam64, action, ip_address, logged_at) VALUES ($1,$2,$3,'disconnected','',$4)").bind(sid).bind(&row.0).bind(&row.1).bind(logged_at).execute(&pool).await;
+                                            }
                                         }
                                         ParsedEvent::RoundTickets { team: _, faction, subfaction, action, tickets, layer, level, logged_at } => {
                                             let winner_team: Option<i32> = if action == "won" { Some(1) } else { None };
