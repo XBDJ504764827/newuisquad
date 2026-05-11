@@ -10,6 +10,7 @@ use crate::rcon_client::pool::RconPool;
 // ═══ Server Health Status ═══
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
 pub enum HealthStatus {
     Online,
     Degraded,  // RCON OK but agent disconnected

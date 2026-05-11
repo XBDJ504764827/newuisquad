@@ -8,10 +8,13 @@ use crate::services::server_monitor::HealthStatus;
 pub async fn list_enhanced(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let monitor = server_monitor::ServerMonitor::new(state.pool.clone(), state.rcon_pool.clone());
+    let monitor = match state.game_services.server_monitor.as_ref() {
+        Some(m) => m,
+        None => return Ok(Json(serde_json::json!({ "error": "ServerMonitor 未启用" }))),
+    };
 
     let pt = state.game_services.player_tracker.as_deref();
-    match server_monitor::get_enhanced_server_list(&state.pool, &monitor, pt).await {
+    match server_monitor::get_enhanced_server_list(&state.pool, monitor, pt).await {
         Ok(servers) => Ok(Json(serde_json::json!({ "data": servers }))),
         Err(e) => Ok(Json(serde_json::json!({ "error": format!("查询失败: {}", e) }))),
     }

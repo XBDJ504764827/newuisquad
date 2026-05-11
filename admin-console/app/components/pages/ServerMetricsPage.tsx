@@ -59,8 +59,8 @@ export default function ServerMetricsPage() {
 
   useEffect(() => { if (activeTab === 'overview') loadOverview(); else loadDetail(); }, [activeTab, loadOverview, loadDetail]);
 
-  const statusColor = (s: string) => s === 'online' ? '#10b981' : s === 'degraded' ? '#f59e0b' : '#ef4444';
-  const statusLabel = (s: string) => s === 'online' ? '在线' : s === 'degraded' ? '降级' : '离线';
+  const statusColor = (s: string) => s === 'online' ? '#10b981' : s === 'degraded' ? '#f59e0b' : s === 'unknown' ? '#6b7280' : '#ef4444';
+  const statusLabel = (s: string) => s === 'online' ? '在线' : s === 'degraded' ? '降级' : s === 'unknown' ? '未知' : '离线';
   const periodLabel: Record<Period, string> = { '1h': '近1小时', '6h': '近6小时', '24h': '近24小时', '7d': '近7天', '30d': '近30天' };
 
   const online = enhancedServers.filter(s => s.health.status === 'online').length;
