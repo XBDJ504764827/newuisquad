@@ -26,7 +26,13 @@ pub async fn create_group(
     State(state): State<AppState>, Path(server_id): Path<i32>,
     Json(req): Json<CreatePermissionGroupRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    if req.group_name.is_empty() {
+    let group_name = if req.group_name.trim().is_empty() {
+        req.name.unwrap_or_default()
+    } else {
+        req.group_name
+    };
+    let group_name = group_name.trim().to_string();
+    if group_name.is_empty() {
         return Ok(Json(serde_json::json!({ "error": "组名不能为空" })));
     }
     // Validate parent exists and is on same server
@@ -41,7 +47,7 @@ pub async fn create_group(
     match sqlx::query_as::<_, crate::models::permission::PermissionGroup>(
         "INSERT INTO permission_groups (server_id, group_name, permissions, parent_group_id, is_admin, is_template) \
          VALUES ($1,$2,$3,$4,$5,false) RETURNING *"
-    ).bind(server_id).bind(&req.group_name).bind(&req.permissions)
+    ).bind(server_id).bind(&group_name).bind(&req.permissions)
      .bind(req.parent_group_id).bind(req.is_admin)
      .fetch_one(&state.pool).await {
         Ok(g) => Ok(Json(serde_json::json!(g))),
@@ -61,7 +67,10 @@ pub async fn update_group(
         Ok(Some(g)) => g,
         _ => return Ok(Json(serde_json::json!({ "error": "组不存在" }))),
     };
-    let name = req.group_name.unwrap_or(current.group_name);
+    let name = req.group_name.or(req.name).unwrap_or(current.group_name).trim().to_string();
+    if name.is_empty() {
+        return Ok(Json(serde_json::json!({ "error": "组名不能为空" })));
+    }
     let perms = req.permissions.unwrap_or(current.permissions);
     let parent = match req.parent_group_id {
         Some(pid) => pid,
@@ -90,9 +99,12 @@ pub async fn delete_group(
     if children > 0 {
         return Ok(Json(serde_json::json!({ "error": "该组正被子组继承，请先解除继承关系" })));
     }
-    let _ = sqlx::query("DELETE FROM permission_groups WHERE id=$1 AND server_id=$2 AND is_template=false")
-        .bind(gid).bind(server_id).execute(&state.pool).await;
-    Ok(Json(serde_json::json!({ "success": true })))
+    match sqlx::query("DELETE FROM permission_groups WHERE id=$1 AND server_id=$2")
+        .bind(gid).bind(server_id).execute(&state.pool).await {
+        Ok(result) if result.rows_affected() > 0 => Ok(Json(serde_json::json!({ "success": true }))),
+        Ok(_) => Ok(Json(serde_json::json!({ "error": "组不存在" }))),
+        Err(e) => Ok(Json(serde_json::json!({ "error": format!("删除失败: {}", e) }))),
+    }
 }
 
 /// POST /api/v1/servers/{id}/permission-groups/{gid}/copy-from-template
@@ -217,11 +229,11 @@ pub async fn resolve_permissions(
 pub async fn permission_catalog() -> Result<Json<serde_json::Value>, StatusCode> {
     let ui_perms: Vec<serde_json::Value> = permission_constants::all_ui_permissions()
         .into_iter()
-        .map(|(code, desc)| serde_json::json!({ "code": code, "description": desc }))
+        .map(|(code, name)| serde_json::json!({ "code": code, "name": name, "description": name }))
         .collect();
     let rcon_perms: Vec<serde_json::Value> = permission_constants::all_rcon_permissions()
         .into_iter()
-        .map(|(code, desc)| serde_json::json!({ "code": code, "description": desc }))
+        .map(|(code, name)| serde_json::json!({ "code": code, "name": name, "description": name }))
         .collect();
     Ok(Json(serde_json::json!({
         "ui": ui_perms,

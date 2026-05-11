@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sqlx::FromRow;
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -29,7 +30,11 @@ pub struct PermissionGroupRow {
 
 #[derive(Debug, Deserialize)]
 pub struct CreatePermissionGroupRequest {
+    #[serde(default)]
     pub group_name: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_permissions")]
     pub permissions: String,
     #[serde(default)]
     pub parent_group_id: Option<i32>,
@@ -42,9 +47,44 @@ fn default_true() -> bool { true }
 #[derive(Debug, Deserialize)]
 pub struct UpdatePermissionGroupRequest {
     pub group_name: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_permissions")]
     pub permissions: Option<String>,
     pub parent_group_id: Option<Option<i32>>,
     pub is_admin: Option<bool>,
+}
+
+fn deserialize_permissions<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<Value>::deserialize(deserializer)?;
+    Ok(permission_value_to_string(value).unwrap_or_default())
+}
+
+fn deserialize_optional_permissions<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<Value>::deserialize(deserializer)?;
+    Ok(permission_value_to_string(value))
+}
+
+fn permission_value_to_string(value: Option<Value>) -> Option<String> {
+    match value {
+        Some(Value::Array(items)) => Some(
+            items
+                .into_iter()
+                .filter_map(|item| item.as_str().map(str::trim).map(str::to_string))
+                .filter(|item| !item.is_empty())
+                .collect::<Vec<_>>()
+                .join(","),
+        ),
+        Some(Value::String(value)) => Some(value),
+        Some(Value::Null) | None => None,
+        Some(_) => Some(String::new()),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]

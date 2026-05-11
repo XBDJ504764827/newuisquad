@@ -1,14 +1,43 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { api } from '../../lib/api';
 
 interface Server { id: number; server_id: string; name: string; ip: string; rcon_port: number; }
 interface PermDef { id: string; code: string; category: string; name: string; description: string; }
-interface PermGroup { id: string; name: string; permissions: string[]; is_admin: boolean; created_at?: string; }
+interface PermGroup { id: string; name: string; group_name?: string; permissions: string[]; is_admin: boolean; is_template?: boolean; created_at?: string; }
 interface AdminEntry { id: string; user_id?: string; steam_id?: string; username: string; group_id: string; group_name?: string; }
+interface CatalogItem { id?: string; code?: string; category?: string; name?: string; description?: string; }
+interface PermissionCatalogResponse { ui?: CatalogItem[]; rcon?: CatalogItem[]; data?: CatalogItem[]; catalog?: CatalogItem[]; }
+interface PermissionGroupResponse { id?: string | number; name?: string; group_name?: string; permissions?: string[] | string; is_admin?: boolean; is_template?: boolean; created_at?: string; }
+interface PermissionAdminResponse { id?: string | number; user_id?: string; steam_id?: string; username?: string; group_id?: string; permission_group_id?: string; group_name?: string; }
 
 type TabKey = 'roles' | 'admins';
+
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function expandPermissions(permissions: string[], catalog: PermDef[]) {
+  const normalized = permissions.map(p => p.trim()).filter(Boolean);
+  const expanded = new Set<string>();
+  const hasAll = normalized.includes('*');
+  const hasUiAll = hasAll || normalized.includes('ui:*');
+  const hasRconAll = hasAll || normalized.includes('rcon:*');
+
+  catalog.forEach(p => {
+    if (!p.code) return;
+    if (hasAll || (hasUiAll && p.code.startsWith('ui:')) || (hasRconAll && p.code.startsWith('rcon:')) || normalized.includes(p.code)) {
+      expanded.add(p.code);
+    }
+  });
+
+  normalized.forEach(p => {
+    if (p !== '*' && p !== 'ui:*' && p !== 'rcon:*') expanded.add(p);
+  });
+
+  return Array.from(expanded);
+}
 
 export default function ServerRolesPage() {
   const [servers, setServers] = useState<Server[]>([]);
@@ -42,8 +71,14 @@ export default function ServerRolesPage() {
     }).catch(() => {});
     // Load permission catalog
     api('/permission-catalog').then(r => r.json()).then(d => {
-      setPermCatalog((d.data || d.catalog || []).map((c: any) => ({
-        id: c.id || c.code || '', code: c.code || c.id || '', category: c.category || '', name: c.name || c.code || '', description: c.description || '',
+      const catalog = d as PermissionCatalogResponse;
+      const flatCatalog = [
+        ...((catalog.ui || []).map(c => ({ ...c, category: '控制台权限' }))),
+        ...((catalog.rcon || []).map(c => ({ ...c, category: '游戏权限' }))),
+        ...(catalog.data || catalog.catalog || []),
+      ];
+      setPermCatalog(flatCatalog.map(c => ({
+        id: c.id || c.code || '', code: c.code || c.id || '', category: c.category || '', name: c.name || c.description || c.code || '', description: c.description || c.name || '',
       })));
     }).catch(() => {});
   }, []);
@@ -58,66 +93,83 @@ export default function ServerRolesPage() {
       ]);
       const gData = await gRes.json();
       const aData = await aRes.json();
-      const rawGroups = (gData.data || gData.groups || []).map((g: any) => {
+      const rawGroups = ((gData.data || gData.groups || []) as PermissionGroupResponse[]).map(g => {
         let perms: string[] = [];
         if (Array.isArray(g.permissions)) {
           perms = g.permissions;
         } else if (typeof g.permissions === 'string') {
-          try { perms = JSON.parse(g.permissions); } catch { perms = []; }
+          try {
+            const parsed = JSON.parse(g.permissions);
+            perms = Array.isArray(parsed) ? parsed : [];
+          } catch {
+            perms = g.permissions.split(',').map((p: string) => p.trim()).filter(Boolean);
+          }
         }
-        return { ...g, permissions: perms };
+        return { ...g, id: String(g.id || ''), name: g.name || g.group_name || '', permissions: perms, is_admin: Boolean(g.is_admin) };
       });
       setGroups(rawGroups);
-      const adminList = (aData.data || aData.admins || []).map((a: any) => ({
-        id: a.id || '', user_id: a.user_id || '', steam_id: a.steam_id || '',
+      const adminList = ((aData.data || aData.admins || []) as PermissionAdminResponse[]).map(a => ({
+        id: String(a.id || ''), user_id: a.user_id || '', steam_id: a.steam_id || '',
         username: a.username || a.steam_id || a.user_id || '未知',
         group_id: a.group_id || a.permission_group_id || '',
         group_name: a.group_name || '',
       }));
       setAdmins(adminList);
-    } catch (e: any) { setError(e.message); }
+    } catch (e: unknown) { setError(getErrorMessage(e)); }
     setLoading(false);
   }, []);
 
-  useEffect(() => { if (serverId) loadData(serverId); }, [serverId, loadData]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      if (serverId) loadData(serverId);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [serverId, loadData]);
 
   const saveGroup = async () => {
     if (!serverId || !groupName.trim()) return;
     setSavingGroup(true);
     setError(null);
     try {
+      const payload = { group_name: groupName.trim(), name: groupName.trim(), is_admin: groupIsAdmin, permissions: groupPerms.join(',') };
       if (editingGroup) {
-        await api(`/servers/${serverId}/permission-groups/${editingGroup.id}`, {
+        const res = await api(`/servers/${serverId}/permission-groups/${editingGroup.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: groupName, is_admin: groupIsAdmin, permissions: groupPerms }),
+          body: JSON.stringify(payload),
         });
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
       } else {
-        await api(`/servers/${serverId}/permission-groups`, {
+        const res = await api(`/servers/${serverId}/permission-groups`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: groupName, is_admin: groupIsAdmin, permissions: groupPerms }),
+          body: JSON.stringify(payload),
         });
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
       }
       setShowGroupDialog(false);
       loadData(serverId);
-    } catch (e: any) { setError(e.message); }
+    } catch (e: unknown) { setError(getErrorMessage(e)); }
     setSavingGroup(false);
   };
 
   const deleteGroup = async (gid: string) => {
     if (!serverId) return;
     try {
-      await api(`/servers/${serverId}/permission-groups/${gid}`, { method: 'DELETE' });
+      const res = await api(`/servers/${serverId}/permission-groups/${gid}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
       loadData(serverId);
-    } catch (e: any) { setError(e.message); }
+    } catch (e: unknown) { setError(getErrorMessage(e)); }
   };
 
   const openEditGroup = (g: PermGroup) => {
     setEditingGroup(g);
     setGroupName(g.name);
     setGroupIsAdmin(g.is_admin);
-    setGroupPerms(g.permissions || []);
+    setGroupPerms(expandPermissions(g.permissions || [], permCatalog));
     setShowGroupDialog(true);
   };
 
@@ -134,7 +186,7 @@ export default function ServerRolesPage() {
     setSavingAdmin(true);
     setError(null);
     try {
-      const body: any = { group_id: adminGroupId };
+      const body: { group_id: string; user_id?: string; steam_id?: string } = { group_id: adminGroupId };
       if (adminType === 'user') body.user_id = adminUsername;
       else body.steam_id = adminSteamId;
       await api(`/servers/${serverId}/permission-admins`, {
@@ -144,7 +196,7 @@ export default function ServerRolesPage() {
       });
       setShowAdminDialog(false);
       loadData(serverId);
-    } catch (e: any) { setError(e.message); }
+    } catch (e: unknown) { setError(getErrorMessage(e)); }
     setSavingAdmin(false);
   };
 
@@ -153,7 +205,7 @@ export default function ServerRolesPage() {
     try {
       await api(`/servers/${serverId}/permission-admins/${aid}`, { method: 'DELETE' });
       loadData(serverId);
-    } catch (e: any) { setError(e.message); }
+    } catch (e: unknown) { setError(getErrorMessage(e)); }
   };
 
   const togglePerm = (code: string) => {
@@ -301,10 +353,9 @@ export default function ServerRolesPage() {
                     <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text3)', marginBottom: 6, textTransform: 'uppercase' }}>{cat}</div>
                     <div style={{ display: 'flex', flexWrap: 'wrap' }}>
                       {perms.map(p => (
-                        <label key={p.code} style={styles.permCheck(groupPerms.includes(p.code))} onClick={() => togglePerm(p.code)}>
-                          <input type="checkbox" checked={groupPerms.includes(p.code)} onChange={() => {}} style={{ display: 'none' }} />
+                        <button key={p.code} type="button" style={styles.permCheck(groupPerms.includes(p.code))} onClick={() => togglePerm(p.code)}>
                           {p.name || p.code}
-                        </label>
+                        </button>
                       ))}
                     </div>
                   </div>
