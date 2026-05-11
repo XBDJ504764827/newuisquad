@@ -27,3 +27,4 @@ pub mod afk_service;
 pub mod command_catalog;
 pub mod motd_generator;
 pub mod identity_resolver;
+pub mod team_service;

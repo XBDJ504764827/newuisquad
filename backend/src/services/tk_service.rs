@@ -224,6 +224,9 @@ pub fn start_tk_monitor(
 
                     // 1. 检测 TK 事件
                     if let Some((attacker_name, attacker_id, victim_name)) = parse_tk(raw) {
+                        // 自伤不需要道歉
+                        if attacker_name == victim_name { continue; }
+
                         // 查询 TK 设置（含道歉关键字和广播消息）
                         let tk_config = match sqlx::query_as::<_, (i32, String, Option<String>, Option<String>)>(
                             "SELECT tk.apology_time_minutes, tk.apology_keyword, tk.notification_message, tk.tk_broadcast_message FROM tk_settings tk WHERE tk.server_id = $1 AND tk.enabled = true"
@@ -304,13 +307,23 @@ pub fn start_tk_monitor(
                             // 先尝试直接匹配
                             if t.mark_apologized(server_id, &steam_id) {
                                 tracing::info!(server_id, %steam_id, %player_name, "玩家已道歉（直接匹配），取消踢出");
-                                send_rcon_broadcast(&rcon_pool, server_id, "道歉成功").await;
+                                let msg = format!("玩家 {} 道歉成功，已取消踢出", player_name);
+                                send_rcon_broadcast(&rcon_pool, server_id, &msg).await;
                             } else if let Some(resolved) = t.resolve_steam_id(server_id, &steam_id, &player_name) {
                                 // 回退匹配
                                 if resolved != steam_id && t.mark_apologized(server_id, &resolved) {
                                     tracing::info!(server_id, %steam_id, resolved = %resolved, %player_name, "玩家已道歉（回退匹配），取消踢出");
-                                    send_rcon_broadcast(&rcon_pool, server_id, "道歉成功").await;
+                                    let msg = format!("玩家 {} 道歉成功，已取消踢出", player_name);
+                                    send_rcon_broadcast(&rcon_pool, server_id, &msg).await;
+                                } else {
+                                    tracing::debug!(server_id, %steam_id, %player_name, "收到道歉关键字但未匹配到 pending 状态");
+                                    let msg = format!("玩家 {} 道歉失败，当前没有需要道歉的误伤记录", player_name);
+                                    send_rcon_broadcast(&rcon_pool, server_id, &msg).await;
                                 }
+                            } else {
+                                tracing::debug!(server_id, %steam_id, %player_name, "收到道歉关键字但未匹配到 pending 状态");
+                                let msg = format!("玩家 {} 道歉失败，当前没有需要道歉的误伤记录", player_name);
+                                send_rcon_broadcast(&rcon_pool, server_id, &msg).await;
                             }
                         }
                     }

@@ -489,7 +489,15 @@ pub fn parse_line(line: &str) -> Option<ParsedEvent> {
     // 11. 小队创建
     if line.contains("has created Squad ") {
         let player_name = line.split(" (Online IDs:").next().unwrap_or("").trim().to_string();
-        let player_name = if let Some(pos) = player_name.rfind(". ") { player_name[pos+2..].to_string() } else { player_name };
+        let player_name = if let Some(pos) = player_name.rfind("LogSquad: ") {
+            player_name[pos + 10..].to_string()
+        } else if let Some(pos) = player_name.rfind("]: ") {
+            player_name[pos + 3..].to_string()
+        } else if let Some(pos) = player_name.rfind(". ") {
+            player_name[pos + 2..].to_string()
+        } else {
+            player_name
+        };
         let squad_id = line.split("has created Squad ").nth(1).and_then(|s| s.split_whitespace().next()).map(|s| s.to_string()).unwrap_or_default();
         let squad_name = line.split("(Squad Name: ").nth(1).and_then(|s| s.split(')').next()).map(|s| s.to_string()).unwrap_or_default();
         let faction = line.split("on ").last().map(|s| s.trim().to_string()).unwrap_or_default();

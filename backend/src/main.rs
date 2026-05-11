@@ -30,6 +30,7 @@ async fn main() -> anyhow::Result<()> {
     let log_tx = agent_pool.log_tx();
     let log_rx1 = log_tx.subscribe();
     let log_rx2 = log_tx.subscribe();
+    let log_rx3 = log_tx.subscribe();
 
     // 初始化默认管理员
     init_admin(&pool, &config).await?;
@@ -96,6 +97,10 @@ async fn main() -> anyhow::Result<()> {
     let server_states_dn = state.server_states.clone();
     let dn_rcon_pool = rcon_pool.clone();
     let dn_handle = services::damage_notify_service::start_damage_notify(pool.clone(), log_rx2, server_states_dn, dn_rcon_pool);
+    // 启动队伍设置服务（建队广播 + 队长时长检测）
+    let ts_server_states = state.server_states.clone();
+    let ts_rcon_pool = rcon_pool.clone();
+    let ts_handle = services::team_service::start_team_service(pool.clone(), log_rx3, ts_server_states, ts_rcon_pool, config.steam_api_key.clone());
     let log_pool = pool;
 
     let cors = if config.allowed_origin == "*" {

@@ -489,6 +489,11 @@ async fn handle_teamkill(
     attacker_pid: Option<i32>,
     rcon_pool: &RconPool,
 ) {
+    // 自伤不需要道歉
+    if attacker == victim {
+        return;
+    }
+
     // 查询 TK 设置
     let tk_config = match sqlx::query_as::<_, (bool, i32, String, i32, String, String, String)>(
         "SELECT enabled, apology_time_minutes, apology_keyword, apology_pre_window_secs, \
@@ -636,7 +641,8 @@ async fn process_apology(
     if t.mark_apologized(server_id, steam_id) {
         tracing::info!(server_id, %steam_id, %player_name, "玩家已道歉（直接匹配），取消踢出");
         drop(t);
-        send_rcon_cmd(pool, server_id, "AdminBroadcast 道歉成功，已取消踢出", rcon_pool).await;
+        let msg = format!("AdminBroadcast 玩家 {} 道歉成功，已取消踢出", player_name);
+        send_rcon_cmd(pool, server_id, &msg, rcon_pool).await;
         return;
     }
     // 直接匹配失败，通过 resolve_steam_id 回退查找（name / alt_id）
@@ -644,12 +650,16 @@ async fn process_apology(
         if resolved_steam != steam_id && t.mark_apologized(server_id, &resolved_steam) {
             tracing::info!(server_id, %steam_id, resolved = %resolved_steam, %player_name, "玩家已道歉（回退匹配），取消踢出");
             drop(t);
-            send_rcon_cmd(pool, server_id, "AdminBroadcast 道歉成功，已取消踢出", rcon_pool).await;
+            let msg = format!("AdminBroadcast 玩家 {} 道歉成功，已取消踢出", player_name);
+            send_rcon_cmd(pool, server_id, &msg, rcon_pool).await;
             return;
         }
     }
     // 均未匹配到（玩家未在 pending 状态）
+    drop(t);
     tracing::debug!(server_id, %steam_id, %player_name, "收到道歉关键字但未匹配到 pending 状态");
+    let msg = format!("AdminBroadcast 玩家 {} 道歉失败，当前没有需要道歉的误伤记录", player_name);
+    send_rcon_cmd(pool, server_id, &msg, rcon_pool).await;
 }
 
 // ═══ RCON 辅助函数（通过连接池复用连接） ═══
