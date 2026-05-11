@@ -14,6 +14,10 @@ export default function ServerEventsPage() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const perPage = 50;
+  const [startTime, setStartTime] = useState('');
+  const [endTime, setEndTime] = useState('');
+  const [appliedStart, setAppliedStart] = useState('');
+  const [appliedEnd, setAppliedEnd] = useState('');
 
   useEffect(() => {
     api('/servers').then(r => r.json()).then(d => {
@@ -31,14 +35,25 @@ export default function ServerEventsPage() {
       broadcast: `/servers/${sid}/admin-broadcasts`,
     };
     try {
-      const res = await api(`${endpoints[tab]}?page=${page}&per_page=${perPage}`);
+      const params = new URLSearchParams();
+      params.set('page', String(page));
+      params.set('per_page', String(perPage));
+      if (appliedStart) params.set('start', new Date(appliedStart).toISOString());
+      if (appliedEnd) params.set('end', new Date(appliedEnd).toISOString());
+      const res = await api(`${endpoints[tab]}?${params.toString()}`);
       const d = await res.json();
       setData(d.data || []);
       setTotal(d.total || 0);
     } catch {}
-  }, [sid, tab, page]);
+  }, [sid, tab, page, appliedStart, appliedEnd]);
 
   useEffect(() => { load(); }, [load]);
+
+  const handleQuery = () => {
+    setAppliedStart(startTime);
+    setAppliedEnd(endTime);
+    setPage(1);
+  };
 
   const tabs: { key: EventTab; label: string; icon: string }[] = [
     { key: 'deployable', label: '工事受损', icon: '🏗️' },
@@ -55,6 +70,22 @@ export default function ServerEventsPage() {
           style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg2)', color: 'var(--text1)' }}>
           {servers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
+        <span style={{ fontSize: 13, color: 'var(--text3)' }}>时间范围:</span>
+        <input type="datetime-local" value={startTime} onChange={e => setStartTime(e.target.value)}
+          style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg2)', color: 'var(--text1)', fontSize: 13 }} />
+        <span style={{ fontSize: 13, color: 'var(--text3)' }}>至</span>
+        <input type="datetime-local" value={endTime} onChange={e => setEndTime(e.target.value)}
+          style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg2)', color: 'var(--text1)', fontSize: 13 }} />
+        <button onClick={handleQuery}
+          style={{ padding: '6px 16px', borderRadius: 6, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', cursor: 'pointer', fontSize: 13, fontWeight: 500 }}>
+          查询
+        </button>
+        {(appliedStart || appliedEnd) && (
+          <button onClick={() => { setStartTime(''); setEndTime(''); setAppliedStart(''); setAppliedEnd(''); setPage(1); }}
+            style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text2)', cursor: 'pointer', fontSize: 12 }}>
+            清除筛选
+          </button>
+        )}
       </div>
 
       {/* Tabs */}

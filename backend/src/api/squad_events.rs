@@ -8,6 +8,16 @@ pub struct PageQuery {
     pub per_page: Option<i64>,
     #[serde(default)]
     pub steam64: Option<String>,
+    #[serde(default)]
+    pub start: Option<String>,
+    #[serde(default)]
+    pub end: Option<String>,
+}
+
+fn parse_time(s: &Option<String>) -> Option<chrono::DateTime<chrono::Utc>> {
+    s.as_deref()
+        .and_then(|v| chrono::DateTime::parse_from_rfc3339(v).ok())
+        .map(|dt| dt.with_timezone(&chrono::Utc))
 }
 
 pub async fn fly_events(
@@ -18,14 +28,16 @@ pub async fn fly_events(
     let page = q.page.unwrap_or(1).max(1);
     let per_page = q.per_page.unwrap_or(50).min(200);
     let offset = (page - 1) * per_page;
+    let start = parse_time(&q.start);
+    let end = parse_time(&q.end);
 
     let (total,) = sqlx::query_as::<_, (i64,)>(
-        "SELECT COUNT(*) FROM fly_events WHERE server_id=$1"
-    ).bind(server_id).fetch_one(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        "SELECT COUNT(*) FROM fly_events WHERE server_id=$1 AND ($2::timestamptz IS NULL OR logged_at >= $2) AND ($3::timestamptz IS NULL OR logged_at <= $3)"
+    ).bind(server_id).bind(start).bind(end).fetch_one(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let items = sqlx::query_as::<_, (i32, i32, String, String, String, String, chrono::DateTime<chrono::Utc>)>(
-        "SELECT id, server_id, player_name, eos_id, steam64, event_type, logged_at FROM fly_events WHERE server_id=$1 ORDER BY logged_at DESC LIMIT $2 OFFSET $3"
-    ).bind(server_id).bind(per_page).bind(offset).fetch_all(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        "SELECT id, server_id, player_name, eos_id, steam64, event_type, logged_at FROM fly_events WHERE server_id=$1 AND ($2::timestamptz IS NULL OR logged_at >= $2) AND ($3::timestamptz IS NULL OR logged_at <= $3) ORDER BY logged_at DESC LIMIT $4 OFFSET $5"
+    ).bind(server_id).bind(start).bind(end).bind(per_page).bind(offset).fetch_all(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let data: Vec<serde_json::Value> = items.into_iter().map(|(id, sid, name, eos, steam, evt, ts)| {
         serde_json::json!({ "id": id, "server_id": sid, "player_name": name, "eos_id": eos, "steam64": steam, "event_type": evt, "logged_at": ts })
@@ -42,25 +54,27 @@ pub async fn kill_events(
     let page = q.page.unwrap_or(1).max(1);
     let per_page = q.per_page.unwrap_or(50).min(200);
     let offset = (page - 1) * per_page;
-    let steam64 = q.steam64.as_deref().filter(|sid| !sid.is_empty());
+    let steam64 = q.steam64.clone().filter(|s| !s.is_empty());
+    let start = parse_time(&q.start);
+    let end = parse_time(&q.end);
 
-    let total = if let Some(sid) = steam64 {
-        sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM kill_events WHERE server_id=$1 AND (attacker_steam64=$2 OR victim_steam64=$2)")
-            .bind(server_id).bind(sid).fetch_one(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.0
-    } else {
-        sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM kill_events WHERE server_id=$1")
-            .bind(server_id).fetch_one(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.0
-    };
+    let total = sqlx::query_as::<_, (i64,)>(
+        "SELECT COUNT(*) FROM kill_events WHERE server_id=$1 \
+         AND ($2::text IS NULL OR attacker_steam64=$2 OR victim_steam64=$2) \
+         AND ($3::timestamptz IS NULL OR logged_at >= $3) \
+         AND ($4::timestamptz IS NULL OR logged_at <= $4)"
+    ).bind(server_id).bind(&steam64).bind(start).bind(end)
+        .fetch_one(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.0;
 
-    let items = if let Some(sid) = steam64 {
-        sqlx::query_as::<_, (i32, i32, String, String, String, String, String, String, f64, String, String, bool, bool, chrono::DateTime<chrono::Utc>)>(
-            "SELECT id, server_id, attacker_name, attacker_eos, attacker_steam64, victim_name, victim_eos, victim_steam64, damage, weapon, event_type, is_kill, is_teamkill, logged_at FROM kill_events WHERE server_id=$1 AND (attacker_steam64=$2 OR victim_steam64=$2) ORDER BY logged_at DESC LIMIT $3 OFFSET $4"
-        ).bind(server_id).bind(sid).bind(per_page).bind(offset).fetch_all(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    } else {
-        sqlx::query_as::<_, (i32, i32, String, String, String, String, String, String, f64, String, String, bool, bool, chrono::DateTime<chrono::Utc>)>(
-            "SELECT id, server_id, attacker_name, attacker_eos, attacker_steam64, victim_name, victim_eos, victim_steam64, damage, weapon, event_type, is_kill, is_teamkill, logged_at FROM kill_events WHERE server_id=$1 ORDER BY logged_at DESC LIMIT $2 OFFSET $3"
-        ).bind(server_id).bind(per_page).bind(offset).fetch_all(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    };
+    let items = sqlx::query_as::<_, (i32, i32, String, String, String, String, String, String, f64, String, String, bool, bool, chrono::DateTime<chrono::Utc>)>(
+        "SELECT id, server_id, attacker_name, attacker_eos, attacker_steam64, victim_name, victim_eos, victim_steam64, damage, weapon, event_type, is_kill, is_teamkill, logged_at \
+         FROM kill_events WHERE server_id=$1 \
+         AND ($2::text IS NULL OR attacker_steam64=$2 OR victim_steam64=$2) \
+         AND ($3::timestamptz IS NULL OR logged_at >= $3) \
+         AND ($4::timestamptz IS NULL OR logged_at <= $4) \
+         ORDER BY logged_at DESC LIMIT $5 OFFSET $6"
+    ).bind(server_id).bind(&steam64).bind(start).bind(end).bind(per_page).bind(offset)
+        .fetch_all(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let data: Vec<serde_json::Value> = items.into_iter().map(|(id, sid, an, ae, as64, vn, ve, vs64, dmg, wp, et, ik, itk, ts)| {
         serde_json::json!({ "id": id, "server_id": sid, "attacker_name": an, "attacker_eos": ae, "attacker_steam64": as64, "victim_name": vn, "victim_eos": ve, "victim_steam64": vs64, "damage": dmg, "weapon": wp, "event_type": et, "is_kill": ik, "is_teamkill": itk, "logged_at": ts })
@@ -77,14 +91,16 @@ pub async fn match_events(
     let page = q.page.unwrap_or(1).max(1);
     let per_page = q.per_page.unwrap_or(20).min(200);
     let offset = (page - 1) * per_page;
+    let start = parse_time(&q.start);
+    let end = parse_time(&q.end);
 
     let (total,) = sqlx::query_as::<_, (i64,)>(
-        "SELECT COUNT(*) FROM match_info WHERE server_id=$1"
-    ).bind(server_id).fetch_one(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        "SELECT COUNT(*) FROM match_info WHERE server_id=$1 AND ($2::timestamptz IS NULL OR logged_at >= $2) AND ($3::timestamptz IS NULL OR logged_at <= $3)"
+    ).bind(server_id).bind(start).bind(end).fetch_one(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let items = sqlx::query_as::<_, (i32, i32, String, String, String, String, Option<i32>, String, chrono::DateTime<chrono::Utc>)>(
-        "SELECT id, server_id, map_name, layer_name, team1_faction, team2_faction, winner_team, event_type, logged_at FROM match_info WHERE server_id=$1 ORDER BY logged_at DESC LIMIT $2 OFFSET $3"
-    ).bind(server_id).bind(per_page).bind(offset).fetch_all(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        "SELECT id, server_id, map_name, layer_name, team1_faction, team2_faction, winner_team, event_type, logged_at FROM match_info WHERE server_id=$1 AND ($2::timestamptz IS NULL OR logged_at >= $2) AND ($3::timestamptz IS NULL OR logged_at <= $3) ORDER BY logged_at DESC LIMIT $4 OFFSET $5"
+    ).bind(server_id).bind(start).bind(end).bind(per_page).bind(offset).fetch_all(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let data: Vec<serde_json::Value> = items.into_iter().map(|(id, sid, map, layer, t1, t2, winner, evt, ts)| {
         serde_json::json!({ "id": id, "server_id": sid, "map_name": map, "layer_name": layer, "team1_faction": t1, "team2_faction": t2, "winner_team": winner, "event_type": evt, "logged_at": ts })
@@ -101,14 +117,16 @@ pub async fn explosion_events(
     let page = q.page.unwrap_or(1).max(1);
     let per_page = q.per_page.unwrap_or(500).min(1000);
     let offset = (page - 1) * per_page;
+    let start = parse_time(&q.start);
+    let end = parse_time(&q.end);
 
     let (total,) = sqlx::query_as::<_, (i64,)>(
-        "SELECT COUNT(*) FROM explosion_events WHERE server_id=$1"
-    ).bind(server_id).fetch_one(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        "SELECT COUNT(*) FROM explosion_events WHERE server_id=$1 AND ($2::timestamptz IS NULL OR logged_at >= $2) AND ($3::timestamptz IS NULL OR logged_at <= $3)"
+    ).bind(server_id).bind(start).bind(end).fetch_one(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let items = sqlx::query_as::<_, (i32, i32, f64, f64, f64, String, String, chrono::DateTime<chrono::Utc>)>(
-        "SELECT id, server_id, pos_x, pos_y, pos_z, damage_causer, damage_instigator, logged_at FROM explosion_events WHERE server_id=$1 ORDER BY logged_at DESC LIMIT $2 OFFSET $3"
-    ).bind(server_id).bind(per_page).bind(offset).fetch_all(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        "SELECT id, server_id, pos_x, pos_y, pos_z, damage_causer, damage_instigator, logged_at FROM explosion_events WHERE server_id=$1 AND ($2::timestamptz IS NULL OR logged_at >= $2) AND ($3::timestamptz IS NULL OR logged_at <= $3) ORDER BY logged_at DESC LIMIT $4 OFFSET $5"
+    ).bind(server_id).bind(start).bind(end).bind(per_page).bind(offset).fetch_all(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let data: Vec<serde_json::Value> = items.into_iter().map(|(id, sid, x, y, z, causer, instigator, ts)| {
         serde_json::json!({ "id": id, "server_id": sid, "pos_x": x, "pos_y": y, "pos_z": z, "damage_causer": causer, "damage_instigator": instigator, "logged_at": ts })
@@ -181,11 +199,14 @@ pub async fn deployable_events(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let page = q.page.unwrap_or(1).max(1); let per_page = q.per_page.unwrap_or(50).min(200);
     let offset = (page - 1) * per_page;
-    let (total,) = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM deployable_damaged_events WHERE server_id=$1")
-        .bind(server_id).fetch_one(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let start = parse_time(&q.start);
+    let end = parse_time(&q.end);
+    let (total,) = sqlx::query_as::<_, (i64,)>(
+        "SELECT COUNT(*) FROM deployable_damaged_events WHERE server_id=$1 AND ($2::timestamptz IS NULL OR logged_at >= $2) AND ($3::timestamptz IS NULL OR logged_at <= $3)"
+    ).bind(server_id).bind(start).bind(end).fetch_one(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let items = sqlx::query_as::<_, (i32, i32, String, f64, String, String, String, f64, chrono::DateTime<chrono::Utc>)>(
-        "SELECT id,server_id,deployable,damage,weapon,player_suffix,damage_type,health_remaining,logged_at FROM deployable_damaged_events WHERE server_id=$1 ORDER BY logged_at DESC LIMIT $2 OFFSET $3"
-    ).bind(server_id).bind(per_page).bind(offset).fetch_all(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        "SELECT id,server_id,deployable,damage,weapon,player_suffix,damage_type,health_remaining,logged_at FROM deployable_damaged_events WHERE server_id=$1 AND ($2::timestamptz IS NULL OR logged_at >= $2) AND ($3::timestamptz IS NULL OR logged_at <= $3) ORDER BY logged_at DESC LIMIT $4 OFFSET $5"
+    ).bind(server_id).bind(start).bind(end).bind(per_page).bind(offset).fetch_all(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let data: Vec<_> = items.into_iter().map(|r| serde_json::json!({"id":r.0,"server_id":r.1,"deployable":r.2,"damage":r.3,"weapon":r.4,"player_suffix":r.5,"damage_type":r.6,"health_remaining":r.7,"logged_at":r.8})).collect();
     Ok(Json(serde_json::json!({"data":data,"total":total,"page":page,"per_page":per_page})))
 }
@@ -196,11 +217,14 @@ pub async fn tick_rate_events(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let page = q.page.unwrap_or(1).max(1); let per_page = q.per_page.unwrap_or(100).min(500);
     let offset = (page - 1) * per_page;
-    let (total,) = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM tick_rate_events WHERE server_id=$1")
-        .bind(server_id).fetch_one(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let start = parse_time(&q.start);
+    let end = parse_time(&q.end);
+    let (total,) = sqlx::query_as::<_, (i64,)>(
+        "SELECT COUNT(*) FROM tick_rate_events WHERE server_id=$1 AND ($2::timestamptz IS NULL OR logged_at >= $2) AND ($3::timestamptz IS NULL OR logged_at <= $3)"
+    ).bind(server_id).bind(start).bind(end).fetch_one(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let items = sqlx::query_as::<_, (i32, i32, f64, chrono::DateTime<chrono::Utc>)>(
-        "SELECT id,server_id,tick_rate,logged_at FROM tick_rate_events WHERE server_id=$1 ORDER BY logged_at DESC LIMIT $2 OFFSET $3"
-    ).bind(server_id).bind(per_page).bind(offset).fetch_all(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        "SELECT id,server_id,tick_rate,logged_at FROM tick_rate_events WHERE server_id=$1 AND ($2::timestamptz IS NULL OR logged_at >= $2) AND ($3::timestamptz IS NULL OR logged_at <= $3) ORDER BY logged_at DESC LIMIT $4 OFFSET $5"
+    ).bind(server_id).bind(start).bind(end).bind(per_page).bind(offset).fetch_all(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let data: Vec<_> = items.into_iter().map(|r| serde_json::json!({"id":r.0,"server_id":r.1,"tick_rate":r.2,"logged_at":r.3})).collect();
     Ok(Json(serde_json::json!({"data":data,"total":total,"page":page,"per_page":per_page})))
 }
@@ -211,11 +235,14 @@ pub async fn vehicle_events(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let page = q.page.unwrap_or(1).max(1); let per_page = q.per_page.unwrap_or(50).min(200);
     let offset = (page - 1) * per_page;
-    let (total,) = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM vehicle_events WHERE server_id=$1")
-        .bind(server_id).fetch_one(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let start = parse_time(&q.start);
+    let end = parse_time(&q.end);
+    let (total,) = sqlx::query_as::<_, (i64,)>(
+        "SELECT COUNT(*) FROM vehicle_events WHERE server_id=$1 AND ($2::timestamptz IS NULL OR logged_at >= $2) AND ($3::timestamptz IS NULL OR logged_at <= $3)"
+    ).bind(server_id).bind(start).bind(end).fetch_one(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let items = sqlx::query_as::<_, (i32, i32, String, String, String, String, chrono::DateTime<chrono::Utc>)>(
-        "SELECT id,server_id,player_name,steam64,vehicle_name,event_type,logged_at FROM vehicle_events WHERE server_id=$1 ORDER BY logged_at DESC LIMIT $2 OFFSET $3"
-    ).bind(server_id).bind(per_page).bind(offset).fetch_all(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        "SELECT id,server_id,player_name,steam64,vehicle_name,event_type,logged_at FROM vehicle_events WHERE server_id=$1 AND ($2::timestamptz IS NULL OR logged_at >= $2) AND ($3::timestamptz IS NULL OR logged_at <= $3) ORDER BY logged_at DESC LIMIT $4 OFFSET $5"
+    ).bind(server_id).bind(start).bind(end).bind(per_page).bind(offset).fetch_all(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let data: Vec<_> = items.into_iter().map(|r| serde_json::json!({"id":r.0,"server_id":r.1,"player_name":r.2,"steam64":r.3,"vehicle_name":r.4,"event_type":r.5,"logged_at":r.6})).collect();
     Ok(Json(serde_json::json!({"data":data,"total":total,"page":page,"per_page":per_page})))
 }
@@ -226,27 +253,31 @@ pub async fn connection_events(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let page = q.page.unwrap_or(1).max(1); let per_page = q.per_page.unwrap_or(50).min(200);
     let offset = (page - 1) * per_page;
+    let start = parse_time(&q.start);
+    let end = parse_time(&q.end);
 
     // 尝试从 connection_events 表获取数据
-    let conn_result = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM connection_events WHERE server_id=$1")
-        .bind(server_id).fetch_one(&state.pool).await;
+    let conn_result = sqlx::query_as::<_, (i64,)>(
+        "SELECT COUNT(*) FROM connection_events WHERE server_id=$1 AND ($2::timestamptz IS NULL OR logged_at >= $2) AND ($3::timestamptz IS NULL OR logged_at <= $3)"
+    ).bind(server_id).bind(start).bind(end).fetch_one(&state.pool).await;
 
     if let Ok((total,)) = conn_result {
         if total > 0 {
             let items = sqlx::query_as::<_, (i32, String, String, String, String, chrono::DateTime<chrono::Utc>)>(
-                "SELECT id,player_name,steam64,action,ip_address,logged_at FROM connection_events WHERE server_id=$1 ORDER BY logged_at DESC LIMIT $2 OFFSET $3"
-            ).bind(server_id).bind(per_page).bind(offset).fetch_all(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+                "SELECT id,player_name,steam64,action,ip_address,logged_at FROM connection_events WHERE server_id=$1 AND ($2::timestamptz IS NULL OR logged_at >= $2) AND ($3::timestamptz IS NULL OR logged_at <= $3) ORDER BY logged_at DESC LIMIT $4 OFFSET $5"
+            ).bind(server_id).bind(start).bind(end).bind(per_page).bind(offset).fetch_all(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
             let data: Vec<_> = items.into_iter().map(|r| serde_json::json!({"id":r.0,"player_name":r.1,"steam64":r.2,"action":r.3,"ip_address":r.4,"logged_at":r.5})).collect();
             return Ok(Json(serde_json::json!({"data":data,"total":total,"page":page,"per_page":per_page})));
         }
     }
 
     // 回退：从 player_info 获取最近活跃玩家作为连接记录
-    let (total,) = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM player_info WHERE server_id=$1")
-        .bind(server_id).fetch_one(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let (total,) = sqlx::query_as::<_, (i64,)>(
+        "SELECT COUNT(*) FROM player_info WHERE server_id=$1 AND ($2::timestamptz IS NULL OR last_seen >= $2) AND ($3::timestamptz IS NULL OR last_seen <= $3)"
+    ).bind(server_id).bind(start).bind(end).fetch_one(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let items = sqlx::query_as::<_, (i32, String, String, String, chrono::DateTime<chrono::Utc>)>(
-        "SELECT id,player_name,steam64,ip,last_seen FROM player_info WHERE server_id=$1 ORDER BY last_seen DESC LIMIT $2 OFFSET $3"
-    ).bind(server_id).bind(per_page).bind(offset).fetch_all(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        "SELECT id,player_name,steam64,ip,last_seen FROM player_info WHERE server_id=$1 AND ($2::timestamptz IS NULL OR last_seen >= $2) AND ($3::timestamptz IS NULL OR last_seen <= $3) ORDER BY last_seen DESC LIMIT $4 OFFSET $5"
+    ).bind(server_id).bind(start).bind(end).bind(per_page).bind(offset).fetch_all(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let data: Vec<_> = items.into_iter().map(|r| serde_json::json!({"id":r.0,"player_name":r.1,"steam64":r.2,"action":"connected","ip_address":r.3,"logged_at":r.4})).collect();
     Ok(Json(serde_json::json!({"data":data,"total":total,"page":page,"per_page":per_page})))
 }
@@ -257,11 +288,14 @@ pub async fn admin_broadcasts(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let page = q.page.unwrap_or(1).max(1); let per_page = q.per_page.unwrap_or(50).min(200);
     let offset = (page - 1) * per_page;
-    let (total,) = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM admin_actions WHERE server_id=$1 AND action_type='broadcast'")
-        .bind(server_id).fetch_one(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let start = parse_time(&q.start);
+    let end = parse_time(&q.end);
+    let (total,) = sqlx::query_as::<_, (i64,)>(
+        "SELECT COUNT(*) FROM admin_actions WHERE server_id=$1 AND action_type='broadcast' AND ($2::timestamptz IS NULL OR logged_at >= $2) AND ($3::timestamptz IS NULL OR logged_at <= $3)"
+    ).bind(server_id).bind(start).bind(end).fetch_one(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let items = sqlx::query_as::<_, (String, String, String, chrono::DateTime<chrono::Utc>)>(
-        "SELECT admin_name,target,message,logged_at FROM admin_actions WHERE server_id=$1 AND action_type='broadcast' ORDER BY logged_at DESC LIMIT $2 OFFSET $3"
-    ).bind(server_id).bind(per_page).bind(offset).fetch_all(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        "SELECT admin_name,target,message,logged_at FROM admin_actions WHERE server_id=$1 AND action_type='broadcast' AND ($2::timestamptz IS NULL OR logged_at >= $2) AND ($3::timestamptz IS NULL OR logged_at <= $3) ORDER BY logged_at DESC LIMIT $4 OFFSET $5"
+    ).bind(server_id).bind(start).bind(end).bind(per_page).bind(offset).fetch_all(&state.pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let data: Vec<_> = items.into_iter().map(|r| serde_json::json!({"admin_name":r.0,"target":r.1,"message":r.2,"logged_at":r.3})).collect();
     Ok(Json(serde_json::json!({"data":data,"total":total,"page":page,"per_page":per_page})))
 }

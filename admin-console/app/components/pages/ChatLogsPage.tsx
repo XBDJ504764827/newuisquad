@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useServers } from '../../lib/useServers';
 import { api } from '../../lib/api';
 import Pagination from '../Pagination';
+import TimeRangeFilter from '../TimeRangeFilter';
 
 export default function ChatLogsPage() {
   const { servers, loading: serversLoading } = useServers();
@@ -12,25 +13,40 @@ export default function ChatLogsPage() {
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [appliedStart, setAppliedStart] = useState('');
+  const [appliedEnd, setAppliedEnd] = useState('');
 
   useEffect(() => {
     if (servers.length > 0 && !serverId) setServerId(servers[0].id);
   }, [servers, serverId]);
 
-  useEffect(() => {
-    if (!serverId) return; setLoading(true);
-    api(`/servers/${serverId}/chat-messages?page=${page}&per_page=100`).then(r => r.json())
+  const load = useCallback(() => {
+    if (!serverId) return;
+    setLoading(true);
+    const params = new URLSearchParams();
+    params.set('page', String(page));
+    params.set('per_page', '100');
+    if (appliedStart) params.set('start', new Date(appliedStart).toISOString());
+    if (appliedEnd) params.set('end', new Date(appliedEnd).toISOString());
+    api(`/servers/${serverId}/chat-messages?${params.toString()}`).then(r => r.json())
       .then(d => { setMessages(d.data || []); setTotal(d.total || 0); setLoading(false); }).catch(() => setLoading(false));
-  }, [serverId, page]);
+  }, [serverId, page, appliedStart, appliedEnd]);
+
+  useEffect(() => { load(); }, [load]);
 
   return (
     <div className="page-view" style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <span style={{ fontSize: 12, color: 'var(--text3)' }}>服务器：</span>
         <select className="rcon-input" style={{ width: 'auto', padding: '6px 10px' }} value={serverId || ''}
           onChange={e => { setServerId(parseInt(e.target.value)); setPage(1); }}>
           {servers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
+        <TimeRangeFilter
+          onApply={(s, e) => { setAppliedStart(s); setAppliedEnd(e); setPage(1); }}
+          onClear={() => { setAppliedStart(''); setAppliedEnd(''); setPage(1); }}
+          hasFilter={!!(appliedStart || appliedEnd)}
+        />
       </div>
       <div className="card">
         <div className="card-header"><div><div className="card-title">聊天记录</div><div className="card-sub">游戏内玩家交流记录（共 {total} 条）</div></div></div>

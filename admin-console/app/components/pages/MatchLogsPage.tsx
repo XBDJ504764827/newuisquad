@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useServers } from '../../lib/useServers';
 import { api } from '../../lib/api';
 import Pagination from '../Pagination';
+import TimeRangeFilter from '../TimeRangeFilter';
 
 interface MatchEvent {
     id: number;
@@ -80,32 +81,46 @@ export default function MatchLogsPage() {
     const [total, setTotal] = useState(0);
     const [loading, setLoading] = useState(false);
     const [expandedMatch, setExpandedMatch] = useState<number | null>(null);
+    const [appliedStart, setAppliedStart] = useState('');
+    const [appliedEnd, setAppliedEnd] = useState('');
 
     useEffect(() => {
         if (servers.length > 0 && !serverId) setServerId(servers[0].id);
     }, [servers, serverId]);
 
-    useEffect(() => {
+    const load = useCallback(() => {
         if (!serverId) return;
         setLoading(true);
-        api(`/servers/${serverId}/match-events?page=${page}&per_page=20`)
+        const params = new URLSearchParams();
+        params.set('page', String(page));
+        params.set('per_page', '20');
+        if (appliedStart) params.set('start', new Date(appliedStart).toISOString());
+        if (appliedEnd) params.set('end', new Date(appliedEnd).toISOString());
+        api(`/servers/${serverId}/match-events?${params.toString()}`)
             .then(r => r.json())
             .then(d => { setEvents(d.data || []); setTotal(d.total || 0); setLoading(false); })
             .catch(e => { console.error(e); setLoading(false); });
-    }, [serverId, page]);
+    }, [serverId, page, appliedStart, appliedEnd]);
+
+    useEffect(() => { load(); }, [load]);
 
     // 将事件按比赛分组（相近时间的事件归为同一场比赛）
     const matches = groupMatches(events);
 
     return (
         <div className="page-view" style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                 <span style={{ fontSize: 12, color: 'var(--text3)' }}>服务器：</span>
                 <select className="rcon-input" style={{ width: 'auto', padding: '6px 10px' }}
                     value={serverId || ''}
                     onChange={e => { setServerId(parseInt(e.target.value)); setPage(1); }}>
                     {servers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                 </select>
+                <TimeRangeFilter
+                    onApply={(s, e) => { setAppliedStart(s); setAppliedEnd(e); setPage(1); }}
+                    onClear={() => { setAppliedStart(''); setAppliedEnd(''); setPage(1); }}
+                    hasFilter={!!(appliedStart || appliedEnd)}
+                />
             </div>
 
             <div className="card">
