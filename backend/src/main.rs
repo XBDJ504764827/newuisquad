@@ -3,6 +3,7 @@ mod config;
 mod db;
 mod models;
 mod protocol;
+mod redis;
 mod repositories;
 mod rcon_client;
 mod services;
@@ -19,6 +20,9 @@ async fn main() -> anyhow::Result<()> {
 
     let config = config::Config::from_env();
     tracing::info!("启动管理控制台后端...");
+
+    // 初始化 Redis 客户端（未配置 REDIS_URL 时自动回退到内存模式）
+    let redis_client = redis::RedisClient::new(config.redis_url.as_deref()).await;
 
     let pool = db::create_pool(&config.database_url).await?;
     sqlx::migrate!("./migrations").run(&pool).await?;
@@ -77,7 +81,7 @@ async fn main() -> anyhow::Result<()> {
         server_states: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         team_switch_cache: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         log_batcher,
-        rate_limiter: api::rate_limiter::RateLimiterState::new(),
+        rate_limiter: api::rate_limiter::RateLimiterState::new(redis_client.clone()),
         rcon_pool: rcon_pool.clone(),
         game_services: api::GameServices {
             player_tracker: Some(player_tracker.clone()),
@@ -89,6 +93,7 @@ async fn main() -> anyhow::Result<()> {
             event_manager: Some(event_manager.clone()),
         },
         permission_version_cache: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+        redis: redis_client,
     };
 
     // 启动广播处理服务

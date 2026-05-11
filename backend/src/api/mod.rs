@@ -42,6 +42,7 @@ use crate::models::server_log::LogEntry;
 use crate::api::agent_ws::AgentPool;
 use crate::api::rate_limiter::RateLimiterState;
 use crate::api::auth_middleware::CacheEntry;
+use crate::redis::RedisClient;
 use crate::services::log_batcher::LogBatcher;
 
 /// 游戏业务相关的所有后台服务，打包为子结构体减少 AppState 字段数
@@ -76,6 +77,8 @@ pub struct AppState {
     pub game_services: GameServices,
     // 权限版本号缓存 (username -> CacheEntry)
     pub permission_version_cache: Arc<tokio::sync::RwLock<std::collections::HashMap<String, CacheEntry>>>,
+    // Redis 客户端（Connected 或 Disabled 回退模式）
+    pub redis: RedisClient,
 }
 
 pub fn build_router(state: AppState) -> Router {
@@ -88,6 +91,7 @@ pub fn build_router(state: AppState) -> Router {
     let public = Router::new()
         .merge(login)
         .route("/api/v1/auth/verify", post(auth::verify_token))
+        .route("/api/v1/auth/logout", post(auth::logout))
         .route("/agent/connect", get(agent_ws::handler))
         .route("/api/v1/servers/{id}/squadjs/update", post(squadjs_report::handler))
         .route("/api/v1/servers/{id}/Admins.cfg", get(permissions::serve_admins_cfg))

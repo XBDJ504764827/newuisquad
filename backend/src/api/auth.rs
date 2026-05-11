@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use jsonwebtoken::{encode, decode, Header, Validation, EncodingKey, DecodingKey};
 use chrono::Utc;
 use serde_json::Value as JsonValue;
+use uuid::Uuid;
 use crate::api::AppState;
 
 #[derive(Deserialize)]
@@ -19,6 +20,7 @@ pub struct Claims {
     pub permissions: JsonValue,
     pub permission_version: i32,
     pub exp: usize,
+    pub jti: String,
 }
 
 pub async fn login(
@@ -45,6 +47,7 @@ pub async fn login(
         permissions: permissions.clone(),
         permission_version,
         exp: (Utc::now() + chrono::Duration::hours(2)).timestamp() as usize,
+        jti: Uuid::new_v4().to_string(),
     };
 
     let token = encode(&Header::default(), &claims, &EncodingKey::from_secret(state.jwt_secret.as_bytes()))
@@ -66,4 +69,39 @@ pub async fn verify_token(
         Ok(data) => Ok(Json(serde_json::json!({ "valid": true, "username": data.claims.username, "role": data.claims.role, "permissions": data.claims.permissions }))),
         Err(_) => Ok(Json(serde_json::json!({ "valid": false }))),
     }
+}
+
+/// 登出：将当前 token 的 JTI 加入 Redis 黑名单
+pub async fn logout(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let token = headers.get("Authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .unwrap_or("");
+
+    if token.is_empty() {
+        return Ok(Json(serde_json::json!({ "error": "未提供令牌" })));
+    }
+
+    let mut validation = Validation::default();
+    validation.validate_exp = false; // 即使过期也能登出
+
+    let claims = decode::<Claims>(
+        token,
+        &DecodingKey::from_secret(state.jwt_secret.as_bytes()),
+        &validation,
+    )
+    .map(|d| d.claims)
+    .map_err(|_| StatusCode::UNAUTHORIZED)?;
+
+    let now = Utc::now().timestamp() as usize;
+    let ttl = if claims.exp > now { (claims.exp - now) as u64 } else { 1 };
+
+    let _ = state.redis.add_to_blacklist(&claims.jti, ttl).await;
+
+    crate::services::system_log::action_log(&state.pool, "auth", &format!("用户 {} 登出", claims.username), "").await;
+
+    Ok(Json(serde_json::json!({ "message": "已登出" })))
 }

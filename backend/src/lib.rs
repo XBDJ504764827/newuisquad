@@ -3,6 +3,7 @@ pub mod config;
 pub mod db;
 pub mod models;
 pub mod protocol;
+pub mod redis;
 pub mod repositories;
 pub mod rcon_client;
 pub mod services;

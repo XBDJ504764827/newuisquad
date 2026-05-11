@@ -63,7 +63,12 @@ pub async fn require_auth(
 
     let claims = &data.claims;
 
-    // 3. 校验权限版本号
+    // 3. 检查 JWT 黑名单（Redis）
+    if app_state.redis.is_blacklisted(&claims.jti).await.unwrap_or(false) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    // 4. 校验权限版本号
     let db_version = get_permission_version(&app_state, &claims.username).await
         .map_err(|_| StatusCode::UNAUTHORIZED)?;
 
