@@ -4,6 +4,7 @@ pub mod logs;
 pub mod files;
 pub mod agent_ws;
 pub mod servers;
+pub mod analytics;
 pub mod admin_users;
 pub mod tk_settings;
 pub mod afk_settings;
@@ -79,6 +80,8 @@ pub struct AppState {
     pub permission_version_cache: Arc<tokio::sync::RwLock<std::collections::HashMap<String, CacheEntry>>>,
     // Redis 客户端（Connected 或 Disabled 回退模式）
     pub redis: RedisClient,
+    // ClickHouse 客户端（可选，用于分析查询）
+    pub clickhouse_pool: Option<Arc<crate::clickhouse::ClickHousePool>>,
 }
 
 pub fn build_router(state: AppState) -> Router {
@@ -101,6 +104,14 @@ pub fn build_router(state: AppState) -> Router {
     let protected = Router::new()
         .route("/api/v1/servers", get(server_info::list).post(servers::create))
         .route("/api/v1/servers/{id}", get(server_info::get_one).put(server_info::update).delete(server_info::delete))
+        // ClickHouse 分析查询
+        .route("/api/v1/servers/{id}/analytics/stats", get(analytics::server_stats))
+        .route("/api/v1/servers/{id}/analytics/weapons", get(analytics::weapon_stats))
+        .route("/api/v1/servers/{id}/analytics/leaderboard", get(analytics::player_kills_leaderboard))
+        .route("/api/v1/servers/{id}/analytics/activity-trend", get(analytics::player_activity_trend))
+        .route("/api/v1/servers/{id}/analytics/matches", get(analytics::match_stats))
+        .route("/api/v1/servers/{id}/analytics/tick-rate", get(analytics::tick_rate_stats))
+        .route("/api/v1/health/clickhouse", get(analytics::health_check))
         .route("/api/v1/servers/{id}/rcon", post(rcon::execute))
         .route("/api/v1/servers/{id}/rcon-logs", get(rcon::list_logs))
         .route("/api/v1/servers/{id}/logs", get(logs::list))

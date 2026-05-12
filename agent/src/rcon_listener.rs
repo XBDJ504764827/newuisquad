@@ -49,6 +49,11 @@ pub fn start_rcon_listener(
             let mut squads_data = String::new();
             let mut map_data = String::new();
             let mut server_info_json = String::new();
+            // 健康检查：连续失败/超时计数
+            let mut consecutive_failures: i32 = 0;
+            let mut consecutive_timeouts: i32 = 0;
+            const MAX_CONSECUTIVE_FAILURES: i32 = 3;
+            const MAX_CONSECUTIVE_TIMEOUTS: i32 = 5;
 
             loop {
                 // 按配置间隔查询状态
@@ -129,6 +134,9 @@ pub fn start_rcon_listener(
                     pending.insert(pid_next, ("map".into(), String::new()));
                     pending.insert(pid_cur, ("map".into(), String::new()));
                     last_query = Instant::now();
+                    // 查询成功，重置健康计数器
+                    consecutive_failures = 0;
+                    consecutive_timeouts = 0;
                 }
 
                 // 定时广播
@@ -153,7 +161,14 @@ pub fn start_rcon_listener(
                 }
 
                 match s.read(&mut buf) {
-                    Ok(0) => { eprintln!("[RCON] 断开"); break; }
+                    Ok(0) => {
+                        eprintln!("[RCON] 断开");
+                        consecutive_failures += 1;
+                        if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                            eprintln!("[RCON] 连续 {} 次断开，标记不健康", consecutive_failures);
+                        }
+                        break;
+                    }
                     Ok(n) => {
                         if partial.len() + n > 65536 {
                             eprintln!("[RCON] 缓冲溢出 ({} bytes)，重置", partial.len() + n);
@@ -241,8 +256,21 @@ pub fn start_rcon_listener(
                             }
                         }
                     }
-                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut => {}
-                    Err(_) => { eprintln!("[RCON] 读错误"); break; }
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut => {
+                        consecutive_timeouts += 1;
+                        if consecutive_timeouts >= MAX_CONSECUTIVE_TIMEOUTS {
+                            eprintln!("[RCON] 连续 {} 次读超时，主动断开重连", consecutive_timeouts);
+                            break;
+                        }
+                    }
+                    Err(_) => {
+                        eprintln!("[RCON] 读错误");
+                        consecutive_failures += 1;
+                        if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                            eprintln!("[RCON] 连续 {} 次读失败，标记不健康", consecutive_failures);
+                        }
+                        break;
+                    }
                 }
             }
             sleep(backoff); backoff = (backoff*2).min(60);
@@ -476,7 +504,7 @@ fn parse_players(raw: &str) -> Vec<PlayerInfo> {
     out
 }
 /// 从行中查找 17 位 SteamID64（以 7656119 开头）
-fn find_steam64_in_line(line: &str) -> String {
+pub fn find_steam64_in_line(line: &str) -> String {
     let mut i = 0;
     while i < line.len() {
         let rest = &line[i..];

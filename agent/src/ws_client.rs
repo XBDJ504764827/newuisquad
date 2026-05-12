@@ -9,6 +9,7 @@ use crate::protocol::AgentMessage;
 const PING_INTERVAL_SECS: u64 = 30;
 const INITIAL_RECONNECT_DELAY_SECS: u64 = 1;
 const MAX_RECONNECT_DELAY_SECS: u64 = 60;
+const MAX_PENDING_MESSAGES: usize = 1000;
 
 pub async fn run(
     ws_url: String,
@@ -16,6 +17,9 @@ pub async fn run(
     msg_rx: Arc<Mutex<mpsc::Receiver<AgentMessage>>>,
 ) {
     let mut reconnect_delay = INITIAL_RECONNECT_DELAY_SECS;
+    // 缓冲未发送的消息，重连后重发
+    let pending_messages: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+
     loop {
         tracing::info!("连接后端: {}", ws_url);
 
@@ -24,6 +28,17 @@ pub async fn run(
                 tracing::info!("WebSocket 已连接 (状态: {:?})", resp.status());
                 reconnect_delay = INITIAL_RECONNECT_DELAY_SECS;
                 let (mut write, mut read) = ws_stream.split();
+
+                // 重连后重发缓冲消息
+                let pending = pending_messages.clone();
+                let mut pending_guard = pending.lock().await;
+                for msg_json in pending_guard.drain(..) {
+                    if write.send(Message::Text(msg_json.into())).await.is_err() {
+                        tracing::warn!("重发缓冲消息失败");
+                        break;
+                    }
+                }
+                drop(pending_guard);
 
                 let send_tx = msg_tx.clone();
                 let recv_handle = tokio::spawn(async move {
@@ -46,7 +61,6 @@ pub async fn run(
                                 }
                             }
                             Message::Ping(data) => {
-                                // tungstenite 自动回复 pong，无需手动处理
                                 tracing::debug!("收到 Ping ({} bytes)", data.len());
                             }
                             Message::Pong(_) => {
@@ -80,8 +94,14 @@ pub async fn run(
                                         }
                                     };
                                     sent_count += 1;
-                                    if write.send(Message::Text(json.into())).await.is_err() {
-                                        tracing::error!("WebSocket 发送失败（共发送 {} 条）", sent_count);
+                                    if write.send(Message::Text(json.clone().into())).await.is_err() {
+                                        tracing::error!("WebSocket 发送失败（共发送 {} 条），缓冲消息", sent_count);
+                                        // 发送失败，缓冲消息以便重连后重发
+                                        let pending = pending_messages.clone();
+                                        let mut pending_guard = pending.lock().await;
+                                        if pending_guard.len() < MAX_PENDING_MESSAGES {
+                                            pending_guard.push(json);
+                                        }
                                         break;
                                     }
                                 }

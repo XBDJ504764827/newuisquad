@@ -31,6 +31,36 @@ pub enum AgentMessage {
         #[serde(default)]
         admin_steam_ids: Vec<String>,
     },
+    // 新增：批量事件上传
+    #[serde(rename = "event_batch")]
+    EventBatch {
+        batch_id: String,
+        events: Vec<EventData>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        compression: Option<String>,
+    },
+    // 新增：配置路径上报
+    #[serde(rename = "cfg_paths_report")]
+    CfgPathsReport {
+        agent_id: String,
+        files: Vec<CfgPathEntry>,
+    },
+    // 新增：配置命令执行结果上报
+    #[serde(rename = "cfg_command_result")]
+    CfgCommandResult {
+        command_id: String,
+        server_id: String,
+        agent_id: String,
+        success: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        backup_path: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        applied_path: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        applied_at: Option<String>,
+    },
 
     // 后端 → Agent
     #[serde(rename = "read_file")]
@@ -41,6 +71,14 @@ pub enum AgentMessage {
     ListFiles { request_id: String, dir: String },
     #[serde(rename = "send_rcon")]
     SendRcon { command: String },
+    // 新增：批量事件确认
+    #[serde(rename = "event_batch_ack")]
+    EventBatchAck {
+        batch_id: String,
+        received: u32,
+        accepted: u32,
+        rejected: u32,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,4 +116,22 @@ pub struct SquadInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TeamName {
     pub team_id: i32, pub faction: String,
+}
+
+// 新增：事件数据结构
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EventData {
+    pub event_id: String,
+    pub event_type: String,
+    pub timestamp: i64,
+    pub data: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw_log: Option<String>,
+}
+
+// 新增：配置路径条目
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CfgPathEntry {
+    pub kind: String,
+    pub path: String,
 }

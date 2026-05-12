@@ -43,6 +43,51 @@ services:
       - squad-net
 
   # ═══════════════════════════════════════════════════
+  #  ClickHouse 分析数据库
+  # ═══════════════════════════════════════════════════
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.3
+    container_name: squad-clickhouse
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_DB: squad_events
+      CLICKHOUSE_USER: squad
+      CLICKHOUSE_PASSWORD: squad123
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./docker/clickhouse/config.xml:/etc/clickhouse-server/config.d/custom.xml:ro
+    ports:
+      - "127.0.0.1:8123:8123"  # HTTP
+      - "127.0.0.1:9000:9000"  # Native
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - squad-net
+
+  # ═══════════════════════════════════════════════════
+  #  管理后台后端（Rust）
+  # ═══════════════════════════════════════════════════
+  backend:
+    image: redis:7-alpine
+    container_name: squad-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 128mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - squad-net
+
+  # ═══════════════════════════════════════════════════
   #  管理后台后端（Rust）
   # ═══════════════════════════════════════════════════
   backend:
@@ -62,12 +107,19 @@ services:
       INIT_ADMIN_PASSWORD: ${INIT_ADMIN_PASSWORD:-admin123}
       ALLOWED_ORIGIN: ${ALLOWED_ORIGIN:-*}
       LOG_FILE_PATH: /var/log/game/server.log
+      # ClickHouse 配置
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_DATABASE: squad_events
+      CLICKHOUSE_USER: squad
+      CLICKHOUSE_PASSWORD: squad123
     ports:
       - "8744:8744"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      clickhouse:
         condition: service_healthy
     networks:
       - squad-net
@@ -99,6 +151,7 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  clickhouse_data:
 
 # ═══════════════════════════════════════════════════
 #  内部网络

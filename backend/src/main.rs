@@ -24,6 +24,24 @@ async fn main() -> anyhow::Result<()> {
     // 初始化 Redis 客户端（未配置 REDIS_URL 时自动回退到内存模式）
     let redis_client = redis::RedisClient::new(config.redis_url.as_deref()).await;
 
+    // 初始化 ClickHouse 客户端（可选）
+    let clickhouse_pool = if let Some(ch_url) = &config.clickhouse_url {
+        let pool = clickhouse::ClickHousePool::new(
+            ch_url,
+            &config.clickhouse_database,
+            config.clickhouse_user.as_deref(),
+            config.clickhouse_password.as_deref(),
+        );
+        // 创建表结构
+        if let Err(e) = create_clickhouse_tables(&pool).await {
+            tracing::warn!("ClickHouse 表创建失败: {}, 将继续使用已有表", e);
+        }
+        Some(Arc::new(pool))
+    } else {
+        tracing::info!("未配置 ClickHouse URL，分析功能将不可用");
+        None
+    };
+
     let pool = db::create_pool(&config.database_url).await?;
     sqlx::migrate!("./migrations").run(&pool).await?;
     tracing::info!("数据库迁移完成");
@@ -94,6 +112,7 @@ async fn main() -> anyhow::Result<()> {
         },
         permission_version_cache: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         redis: redis_client,
+        clickhouse_pool,
     };
 
     // 启动广播处理服务
@@ -178,5 +197,25 @@ async fn init_admin(pool: &sqlx::PgPool, config: &config::Config) -> anyhow::Res
             .execute(pool).await?;
         tracing::info!("已创建默认管理员: {}", config.init_admin_username);
     }
+    Ok(())
+}
+
+/// 创建 ClickHouse 表结构
+async fn create_clickhouse_tables(pool: &clickhouse::ClickHousePool) -> anyhow::Result<()> {
+    let client = pool.client();
+    let db = &pool.database;
+
+    let _ = client
+        .query(&format!("CREATE DATABASE IF NOT EXISTS {}", db))
+        .execute()
+        .await;
+
+    for sql in clickhouse::schema::get_all_create_statements() {
+        if let Err(e) = client.query(&sql).execute().await {
+            tracing::error!("ClickHouse 表创建失败: {}", e);
+        }
+    }
+
+    tracing::info!("ClickHouse 表结构创建完成");
     Ok(())
 }

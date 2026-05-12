@@ -28,3 +28,4 @@ pub mod command_catalog;
 pub mod motd_generator;
 pub mod identity_resolver;
 pub mod team_service;
+pub mod clickhouse_ingest;

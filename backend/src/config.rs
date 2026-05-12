@@ -12,6 +12,11 @@ pub struct Config {
     pub jwt_secret: String,
     pub allowed_origin: String,
     pub redis_url: Option<String>,
+    // ClickHouse 配置（可选）
+    pub clickhouse_url: Option<String>,
+    pub clickhouse_database: String,
+    pub clickhouse_user: Option<String>,
+    pub clickhouse_password: Option<String>,
 }
 
 impl Config {
@@ -34,6 +39,10 @@ impl Config {
             jwt_secret: env::var("JWT_SECRET").unwrap_or_else(|_| "change-me-in-production".into()),
             allowed_origin: env::var("ALLOWED_ORIGIN").unwrap_or_else(|_| "*".into()),
             redis_url: env::var("REDIS_URL").ok().filter(|s| !s.is_empty()),
+            clickhouse_url: env::var("CLICKHOUSE_URL").ok().filter(|s| !s.is_empty()),
+            clickhouse_database: env::var("CLICKHOUSE_DATABASE").unwrap_or_else(|_| "squad_events".into()),
+            clickhouse_user: env::var("CLICKHOUSE_USER").ok().filter(|s| !s.is_empty()),
+            clickhouse_password: env::var("CLICKHOUSE_PASSWORD").ok().filter(|s| !s.is_empty()),
         }
     }
 }

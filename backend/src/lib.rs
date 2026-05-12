@@ -1,4 +1,5 @@
 pub mod api;
+pub mod clickhouse;
 pub mod config;
 pub mod db;
 pub mod models;
